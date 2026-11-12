@@ -3,9 +3,9 @@ import io
 import re
 import time
 import base64
-import aiohttp
 import unicodedata
 import textdistance
+from curl_cffi.requests import AsyncSession
 from pydub import AudioSegment
 
 from queue import Queue
@@ -63,9 +63,10 @@ CarryOn = True
 
 
 async def fetch_url(url):
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url) as response:
-            return await response.text(), response.status, response.url
+    # curl_cffi imita o fingerprint TLS do Chrome (CifraClub bloqueia clientes HTTP comuns com 403)
+    async with AsyncSession(impersonate="chrome") as session:
+        response = await session.get(url)
+        return response.text, response.status_code, str(response.url)
 
 def list_text(line: str) -> str:
     """
@@ -309,15 +310,23 @@ async def search():
         body = dom.body
         pre = body.find("pre")
 
-        normalized_text = cifra_normalizer(pre.get_text().split('\n'))
-        html_text = str(pre).replace("<pre>", "").replace("</pre>", "").split('\n')
+        # CifraClub injeta zero-width spaces (\u200b) que quebram a detecção de acordes
+        pre_text = pre.get_text().replace("\u200b", "")
+        normalized_text = cifra_normalizer(pre_text.split('\n'))
+        # decode_contents() retorna o HTML interno sem a tag <pre ...> (que agora tem atributos);
+        # remove também as <div>s de linha que o CifraClub passou a usar
+        inner_html = pre.decode_contents().replace("\u200b", "")
+        inner_html = re.sub(r'</?div[^>]*>', '', inner_html)
+        html_text = inner_html.split('\n')
         indexed_text = cifra_scrolling_index(normalized_text, html_text, title=musica, author=artista)
         starting_block = return_block(normalized_text,3,BLOCK_SIZE)
 
         return render_template('index.html', indexed_text=indexed_text, found_page='true')
 
     else:
-        indexed_text = "ERRO"
+        # CifraClub hoje responde 404 para artista/música inexistentes (sem redirecionamento)
+        indexed_text = {'message': 'Não encontramos essa cifra! Confira a grafia ou busque no Cifra Club:',
+                        'url': 'https://www.cifraclub.com.br/'}
         return render_template('index.html', indexed_text=indexed_text, found_page='false')
     
 if __name__ == '__main__':
