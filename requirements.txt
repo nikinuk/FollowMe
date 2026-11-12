@@ -34,6 +34,7 @@ matplotlib-inline==0.1.7
 multidict==6.1.0
 nest-asyncio==1.6.0
 numpy==2.2.3
+openai==1.93.0
 packaging==24.2
 parso==0.8.4
 platformdirs==4.3.6
@@ -42,6 +43,7 @@ propcache==0.3.0
 psutil==7.0.0
 pure_eval==0.2.3
 pycparser==2.22
+pydub==0.25.1
 Pygments==2.19.1
 python-dateutil==2.9.0.post0
 python-engineio==4.11.2
@@ -60,7 +62,6 @@ tqdm==4.67.1
 traitlets==5.14.3
 typing_extensions==4.12.2
 urllib3==2.3.0
-vosk==0.3.45
 wcwidth==0.2.13
 websockets==14.2
 Werkzeug==3.1.3

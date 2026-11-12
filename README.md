@@ -66,7 +66,6 @@ venv\Scripts\activate
 source venv/bin/activate
 
 pip install -r requirements.txt
-pip install openai pydub  # dependências ainda não listadas no requirements.txt
 ```
 
 Configure a chave da OpenAI como variável de ambiente:
