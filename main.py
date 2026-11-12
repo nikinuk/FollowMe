@@ -130,10 +130,9 @@ def return_block(list: list[str], first_line: int, length: int) -> list[str]:
     # Return the block list
     return block
 
-def best_line(text_list: list[str], phrase: str, distance_metric=textdistance.levenshtein):
+def best_line(text_list: list[str], phrase: str, current_line: int = -1, distance_metric=textdistance.levenshtein):
     best_distance = float('inf')  # Initialize with infinity
-    bline = -1
-    best_text = ""
+    candidates = []
 
     for text_toup in text_list:
         # distância normalizada pelo tamanho da maior string -> 0..1,
@@ -141,26 +140,43 @@ def best_line(text_list: list[str], phrase: str, distance_metric=textdistance.le
         distance = distance_metric.normalized_distance(phrase, text_toup[0])
         if distance < best_distance:
             best_distance = distance
-            bline = text_toup[1]
-            best_text = text_toup[0]
+            candidates = [text_toup]
+        elif distance == best_distance:
+            # linhas repetidas (refrões) empatam; guarda todas as ocorrências
+            candidates.append(text_toup)
+
+    if not candidates:
+        return -1, best_distance, ""
+
+    # em caso de empate, prioriza a ocorrência mais próxima ABAIXO da posição
+    # atual (a música sempre anda pra frente); se não houver nenhuma à frente,
+    # fica na ocorrência mais próxima para trás (não volta ao início)
+    ahead = [c for c in candidates if c[1] > current_line]
+    if ahead:
+        best_text, bline = min(ahead, key=lambda c: c[1])
+    else:
+        best_text, bline = max(candidates, key=lambda c: c[1])
 
     return bline, best_distance, best_text
 
 def find_best_line(block):
     global CarryOn
     try:
+        # posição atual na música; começa logo antes da janela inicial
+        current_line = block[0][1] - 1 if block else -1
         while CarryOn:
             t0 = time.time()
             phrase = transcriptions.get(block=True, timeout=30)
             # normaliza a transcrição (pontuação/caixa/acentos) para comparar
             # em pé de igualdade com as linhas já normalizadas da letra
             phrase = list_text(phrase)
-            new_start_line, incerteza, line = best_line(block, phrase)
+            new_start_line, incerteza, line = best_line(block, phrase, current_line)
             incerteza = round(incerteza, 2)
             socketio.emit('index_info', {'index': "l" + str(new_start_line), 'incerteza': incerteza, 'minimo': SIMILARIDADE_MINIMA, 'phrase': phrase, 'line': line})
             print("sent data",  "l" + str(new_start_line), incerteza, SIMILARIDADE_MINIMA, phrase, line)
             if incerteza > SIMILARIDADE_MINIMA:
                 continue
+            current_line = new_start_line
             block = return_block(normalized_text, new_start_line-RECUO, BLOCK_SIZE)
             time_log.append({'find_best_line': time.time()-t0})
     except KeyboardInterrupt:
