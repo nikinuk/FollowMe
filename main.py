@@ -130,14 +130,25 @@ def return_block(list: list[str], first_line: int, length: int) -> list[str]:
     # Return the block list
     return block
 
+def partial_distance(a: str, b: str, metric=textdistance.levenshtein) -> float:
+    """
+    Distância parcial normalizada (0..1): desliza a string menor sobre a maior
+    e retorna a melhor janela. Essencial porque o áudio é fatiado em blocos e o
+    Whisper frequentemente transcreve só um fragmento da linha cantada.
+    """
+    s, l = (a, b) if len(a) <= len(b) else (b, a)
+    if not s:
+        return 1.0
+    n = len(s)
+    return min(metric.normalized_distance(s, l[i:i + n]) for i in range(0, len(l) - n + 1 or 1))
+
 def best_line(text_list: list[str], phrase: str, current_line: int = -1, distance_metric=textdistance.levenshtein):
     best_distance = float('inf')  # Initialize with infinity
     candidates = []
 
     for text_toup in text_list:
-        # distância normalizada pelo tamanho da maior string -> 0..1,
-        # tornando o limiar justo para linhas curtas e longas
-        distance = distance_metric.normalized_distance(phrase, text_toup[0])
+        # distância parcial: tolera fragmentos de linha e normaliza pelo tamanho
+        distance = partial_distance(phrase, text_toup[0], distance_metric)
         if distance < best_distance:
             best_distance = distance
             candidates = [text_toup]
@@ -170,6 +181,9 @@ def find_best_line(block):
             # normaliza a transcrição (pontuação/caixa/acentos) para comparar
             # em pé de igualdade com as linhas já normalizadas da letra
             phrase = list_text(phrase)
+            # fragmentos muito curtos casariam com qualquer linha no partial matching
+            if len(phrase) < 6:
+                continue
             new_start_line, incerteza, line = best_line(block, phrase, current_line)
             incerteza = round(incerteza, 2)
             socketio.emit('index_info', {'index': "l" + str(new_start_line), 'incerteza': incerteza, 'minimo': SIMILARIDADE_MINIMA, 'phrase': phrase, 'line': line})
