@@ -53,7 +53,9 @@ FRAME_RATE = 16000
 RECORD_SECONDS = 5
 BLOCK_SIZE = 10
 RECUO = 0
-SIMILARIDADE_MINIMA = 18
+# incerteza normalizada: distância de Levenshtein / tamanho da maior string (0 = igual, 1 = nada a ver)
+# calibrado com casos reais: matches corretos <= 0.43, errados/alucinações >= 0.63
+SIMILARIDADE_MINIMA = 0.5
 
 recordings = Queue()
 transcriptions = Queue()
@@ -131,9 +133,12 @@ def return_block(list: list[str], first_line: int, length: int) -> list[str]:
 def best_line(text_list: list[str], phrase: str, distance_metric=textdistance.levenshtein):
     best_distance = float('inf')  # Initialize with infinity
     bline = -1
+    best_text = ""
 
     for text_toup in text_list:
-        distance = distance_metric(phrase, text_toup[0])
+        # distância normalizada pelo tamanho da maior string -> 0..1,
+        # tornando o limiar justo para linhas curtas e longas
+        distance = distance_metric.normalized_distance(phrase, text_toup[0])
         if distance < best_distance:
             best_distance = distance
             bline = text_toup[1]
@@ -151,6 +156,7 @@ def find_best_line(block):
             # em pé de igualdade com as linhas já normalizadas da letra
             phrase = list_text(phrase)
             new_start_line, incerteza, line = best_line(block, phrase)
+            incerteza = round(incerteza, 2)
             socketio.emit('index_info', {'index': "l" + str(new_start_line), 'incerteza': incerteza, 'minimo': SIMILARIDADE_MINIMA, 'phrase': phrase, 'line': line})
             print("sent data",  "l" + str(new_start_line), incerteza, SIMILARIDADE_MINIMA, phrase, line)
             if incerteza > SIMILARIDADE_MINIMA:
