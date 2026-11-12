@@ -1,14 +1,20 @@
 import os
 import io
 import re
+import sys
 import time
 import base64
-import aiohttp
 import unicodedata
 import textdistance
+from curl_cffi.requests import AsyncSession
 from pydub import AudioSegment
 
-from queue import Queue
+# Console do Windows usa cp1252; sem isso, prints de transcrições com
+# caracteres especiais (ex.: ♪) derrubam as threads com UnicodeEncodeError
+sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
+sys.stderr.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
+
+from queue import Queue, Empty
 from threading import Thread
 from bs4 import BeautifulSoup
 from flask_socketio import SocketIO
@@ -45,9 +51,18 @@ count_samples = 1
 CHANNELS = 1
 FRAME_RATE = 16000
 RECORD_SECONDS = 5
-BLOCK_SIZE = 10
+# janela de busca enxuta: limita o salto máximo a 4 linhas e deixa fora de
+# alcance ecos do prompt (o Whisper às vezes alucina linhas da música que
+# ainda não foram cantadas, e elas casam com raw 0.0 em qualquer ocorrência)
+BLOCK_SIZE = 5
 RECUO = 0
-SIMILARIDADE_MINIMA = 18
+# incerteza normalizada: distância de Levenshtein / tamanho da maior string (0 = igual, 1 = nada a ver)
+# calibrado com casos reais: matches corretos <= 0.43, errados/alucinações >= 0.63
+SIMILARIDADE_MINIMA = 0.5
+# penalidade por linha saltada: avançar para a linha seguinte é grátis; saltos
+# maiores exigem matches cada vez melhores (evita que um falso positivo distante
+# descarrile a posição). Voltar custa o dobro: a música quase sempre anda pra frente
+PENALIDADE_SALTO = 0.05
 
 recordings = Queue()
 transcriptions = Queue()
@@ -63,9 +78,10 @@ CarryOn = True
 
 
 async def fetch_url(url):
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url) as response:
-            return await response.text(), response.status, response.url
+    # curl_cffi imita o fingerprint TLS do Chrome (CifraClub bloqueia clientes HTTP comuns com 403)
+    async with AsyncSession(impersonate="chrome") as session:
+        response = await session.get(url)
+        return response.text, response.status_code, str(response.url)
 
 def list_text(line: str) -> str:
     """
@@ -121,83 +137,133 @@ def return_block(list: list[str], first_line: int, length: int) -> list[str]:
     # Return the block list
     return block
 
-def best_line(text_list: list[str], phrase: str, distance_metric=textdistance.levenshtein):
-    best_distance = float('inf')  # Initialize with infinity
-    bline = -1
+def partial_distance(a: str, b: str, metric=textdistance.levenshtein) -> float:
+    """
+    Distância parcial normalizada (0..1): desliza a string menor sobre a maior
+    e retorna a melhor janela. Essencial porque o áudio é fatiado em blocos e o
+    Whisper frequentemente transcreve só um fragmento da linha cantada.
+    """
+    s, l = (a, b) if len(a) <= len(b) else (b, a)
+    if not s:
+        return 1.0
+    n = len(s)
+    return min(metric.normalized_distance(s, l[i:i + n]) for i in range(0, len(l) - n + 1 or 1))
+
+def best_line(text_list: list[str], phrase: str, current_line: int = -1, distance_metric=textdistance.levenshtein):
+    best_score = float('inf')  # Initialize with infinity
+    candidates = []
 
     for text_toup in text_list:
-        distance = distance_metric(phrase, text_toup[0])
-        if distance < best_distance:
-            best_distance = distance
-            bline = text_toup[1]
-            best_text = text_toup[0]
+        # normaliza a linha como a transcrição (acentos/pontuação), senão
+        # 'solidão,' vs 'solidao' cria um piso artificial de distância
+        line_norm = list_text(text_toup[0])
+        # distância parcial: tolera fragmentos de linha e normaliza pelo tamanho
+        distance = partial_distance(phrase, line_norm, distance_metric)
+        # penaliza saltos: ficar na linha atual ou ir à seguinte é grátis;
+        # cada linha saltada encarece o candidato (voltar custa o dobro)
+        if text_toup[1] > current_line:
+            gap_penalty = PENALIDADE_SALTO * (text_toup[1] - current_line - 1)
+        else:
+            gap_penalty = 2 * PENALIDADE_SALTO * (current_line - text_toup[1])
+        score = distance + gap_penalty
+        if score < best_score:
+            best_score = score
+            candidates = [text_toup]
+        elif score == best_score:
+            # linhas repetidas (refrões) empatam; guarda todas as ocorrências
+            candidates.append(text_toup)
 
-    return bline, best_distance, best_text
+    if not candidates:
+        return -1, best_score, ""
+
+    # em caso de empate, prioriza a ocorrência mais próxima a partir da posição
+    # ATUAL (inclusive): fragmentos repetidos da mesma linha ficam parados, e a
+    # música só anda quando uma linha distinta à frente casa melhor; se não
+    # houver candidato na atual/à frente, fica na ocorrência mais próxima atrás
+    ahead = [c for c in candidates if c[1] >= current_line]
+    if ahead:
+        best_text, bline = min(ahead, key=lambda c: c[1])
+    else:
+        best_text, bline = max(candidates, key=lambda c: c[1])
+
+    return bline, best_score, best_text
 
 def find_best_line(block):
     global CarryOn
-    try:
-        while CarryOn:
+    # posição atual na música; começa na primeira linha da janela inicial
+    current_line = block[0][1] if block else -1
+    while CarryOn:
+        try:
+            # timeout curto apenas para reavaliar CarryOn; silêncio longo
+            # (intro/solo) não pode derrubar a thread
+            phrase = transcriptions.get(block=True, timeout=2)
+        except Empty:
+            continue
+        try:
             t0 = time.time()
-            phrase = transcriptions.get(block=True, timeout=30)
-            new_start_line, incerteza, line = best_line(block, phrase)
+            # normaliza a transcrição (pontuação/caixa/acentos) para comparar
+            # em pé de igualdade com as linhas já normalizadas da letra
+            phrase = list_text(phrase)
+            # fragmentos muito curtos casariam com qualquer linha no partial matching
+            if len(phrase) < 6:
+                continue
+            new_start_line, incerteza, line = best_line(block, phrase, current_line)
+            incerteza = round(incerteza, 2)
             socketio.emit('index_info', {'index': "l" + str(new_start_line), 'incerteza': incerteza, 'minimo': SIMILARIDADE_MINIMA, 'phrase': phrase, 'line': line})
             print("sent data",  "l" + str(new_start_line), incerteza, SIMILARIDADE_MINIMA, phrase, line)
             if incerteza > SIMILARIDADE_MINIMA:
                 continue
+            current_line = new_start_line
             block = return_block(normalized_text, new_start_line-RECUO, BLOCK_SIZE)
             time_log.append({'find_best_line': time.time()-t0})
-    except KeyboardInterrupt:
-        print("KeyboardInterrupt on find_best_line")
-    except Exception as e:
-        print(e)
-    finally:
-        print("Exiting")
-        #exit system on keyboard interrupt
-        CarryOn = False
+        except Exception as e:
+            # loga e segue; um erro pontual não deve parar o seguimento
+            print("Erro em find_best_line:", e)
+    print("find_best_line encerrada")
 
 def speech_recognition(prompt): 
     global CarryOn
-    try:
-        while CarryOn:
+    while CarryOn:
+        try:
+            rec_frames = recordings.get(block=True, timeout=2)
+        except Empty:
+            continue
+        try:
             t0 = time.time()
-            rec_frames = recordings.get()
-            #rec.AcceptWaveform(rec_frames)
-            #result = rec.Result()
-            result = transcribe(rec_frames, prompt="")
+            # o prompt com linhas da música guia o Whisper (vocabulário e idioma),
+            # reduzindo alucinações em trechos de silêncio/ruído
+            result = transcribe(rec_frames, prompt=prompt)
             text = result.text
             print("transcription:",text)
             if len(text) > 3:
                 transcriptions.put(text)
             time_log.append({'speech_recognition': time.time()-t0})
-            
-    except KeyboardInterrupt:
-        print("KeyboardInterrupt on speech_recognition")
+        except Exception as e:
+            print("Erro em speech_recognition:", e)
+    print("speech_recognition encerrada")
+
+# referências das threads ativas para impedir instâncias duplicadas
+transcribe_thread = None
+process_thread = None
 
 def start_threads(block):
-    global CarryOn
+    global CarryOn, transcribe_thread, process_thread
+    # cliques repetidos em START criavam threads duplicadas competindo pelas
+    # mesmas filas, cada uma com sua própria janela -> saltos erráticos
+    if transcribe_thread is not None and transcribe_thread.is_alive():
+        print("Threads já em execução; START ignorado")
+        return
     CarryOn = True
-    try:
-        prompts = "\n".join([line[0] for line in starting_block])
-        transcribe = Thread(target=speech_recognition, args=(prompts,), daemon=True)
-        transcribe.start()
-        process = Thread(target=find_best_line, args=(block,), daemon=True)
-        process.start()
-    except KeyboardInterrupt:
-        transcribe.join()
-        process.join()
-        print("KeyboardInterrupt on start_recording")
+    prompts = "\n".join([line[0] for line in block])
+    transcribe_thread = Thread(target=speech_recognition, args=(prompts,), daemon=True)
+    transcribe_thread.start()
+    process_thread = Thread(target=find_best_line, args=(block,), daemon=True)
+    process_thread.start()
 
 def stop_threads():
     global CarryOn
     CarryOn = False
-    try:
-        transcribe.join()
-        #process.join()
-        index()
-        print("Stopping threads")
-    except:
-        pass
+    print("Stopping threads")
 
 # Abrir arquivo texto "Procissão.txt" separando linha a linha
 with open("musicas/procissao.txt", "r", encoding="utf-8") as f:
@@ -309,15 +375,25 @@ async def search():
         body = dom.body
         pre = body.find("pre")
 
-        normalized_text = cifra_normalizer(pre.get_text().split('\n'))
-        html_text = str(pre).replace("<pre>", "").replace("</pre>", "").split('\n')
+        # CifraClub injeta zero-width spaces (\u200b) que quebram a detecção de acordes
+        pre_text = pre.get_text().replace("\u200b", "")
+        normalized_text = cifra_normalizer(pre_text.split('\n'))
+        # decode_contents() retorna o HTML interno sem a tag <pre ...> (que agora tem atributos);
+        # remove também as <div>s de linha que o CifraClub passou a usar
+        inner_html = pre.decode_contents().replace("\u200b", "")
+        inner_html = re.sub(r'</?div[^>]*>', '', inner_html)
+        html_text = inner_html.split('\n')
         indexed_text = cifra_scrolling_index(normalized_text, html_text, title=musica, author=artista)
-        starting_block = return_block(normalized_text,3,BLOCK_SIZE)
+        # janela inicial a partir da linha 0: começar em 3 tornava as três
+        # primeiras linhas da música inalcançáveis no início do seguimento
+        starting_block = return_block(normalized_text, 0, BLOCK_SIZE)
 
         return render_template('index.html', indexed_text=indexed_text, found_page='true')
 
     else:
-        indexed_text = "ERRO"
+        # CifraClub hoje responde 404 para artista/música inexistentes (sem redirecionamento)
+        indexed_text = {'message': 'Não encontramos essa cifra! Confira a grafia ou busque no Cifra Club:',
+                        'url': 'https://www.cifraclub.com.br/'}
         return render_template('index.html', indexed_text=indexed_text, found_page='false')
     
 if __name__ == '__main__':
