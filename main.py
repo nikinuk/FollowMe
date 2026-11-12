@@ -1,12 +1,18 @@
 import os
 import io
 import re
+import sys
 import time
 import base64
 import unicodedata
 import textdistance
 from curl_cffi.requests import AsyncSession
 from pydub import AudioSegment
+
+# Console do Windows usa cp1252; sem isso, prints de transcrições com
+# caracteres especiais (ex.: ♪) derrubam as threads com UnicodeEncodeError
+sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 from queue import Queue
 from threading import Thread
@@ -141,6 +147,9 @@ def find_best_line(block):
         while CarryOn:
             t0 = time.time()
             phrase = transcriptions.get(block=True, timeout=30)
+            # normaliza a transcrição (pontuação/caixa/acentos) para comparar
+            # em pé de igualdade com as linhas já normalizadas da letra
+            phrase = list_text(phrase)
             new_start_line, incerteza, line = best_line(block, phrase)
             socketio.emit('index_info', {'index': "l" + str(new_start_line), 'incerteza': incerteza, 'minimo': SIMILARIDADE_MINIMA, 'phrase': phrase, 'line': line})
             print("sent data",  "l" + str(new_start_line), incerteza, SIMILARIDADE_MINIMA, phrase, line)
@@ -165,7 +174,9 @@ def speech_recognition(prompt):
             rec_frames = recordings.get()
             #rec.AcceptWaveform(rec_frames)
             #result = rec.Result()
-            result = transcribe(rec_frames, prompt="")
+            # o prompt com linhas da música guia o Whisper (vocabulário e idioma),
+            # reduzindo alucinações em trechos de silêncio/ruído
+            result = transcribe(rec_frames, prompt=prompt)
             text = result.text
             print("transcription:",text)
             if len(text) > 3:
@@ -179,7 +190,7 @@ def start_threads(block):
     global CarryOn
     CarryOn = True
     try:
-        prompts = "\n".join([line[0] for line in starting_block])
+        prompts = "\n".join([line[0] for line in block])
         transcribe = Thread(target=speech_recognition, args=(prompts,), daemon=True)
         transcribe.start()
         process = Thread(target=find_best_line, args=(block,), daemon=True)
