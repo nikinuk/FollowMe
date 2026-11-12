@@ -51,7 +51,10 @@ count_samples = 1
 CHANNELS = 1
 FRAME_RATE = 16000
 RECORD_SECONDS = 5
-BLOCK_SIZE = 10
+# janela de busca enxuta: limita o salto máximo a 4 linhas e deixa fora de
+# alcance ecos do prompt (o Whisper às vezes alucina linhas da música que
+# ainda não foram cantadas, e elas casam com raw 0.0 em qualquer ocorrência)
+BLOCK_SIZE = 5
 RECUO = 0
 # incerteza normalizada: distância de Levenshtein / tamanho da maior string (0 = igual, 1 = nada a ver)
 # calibrado com casos reais: matches corretos <= 0.43, errados/alucinações >= 0.63
