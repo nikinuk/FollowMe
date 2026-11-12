@@ -1,0 +1,489 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Canta comigo</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Open+Sans:ital,wght@0,300..800;1,300..800&display=swap" rel="stylesheet">
+    <style>
+
+body {
+    font-family: "Open Sans", serif;
+    font-optical-sizing: auto;
+    font-weight: 400;
+    font-style: normal;
+    font-variation-settings:"wdth" 100;
+    margin-left: 24px;
+}
+
+b {
+    color: orangered;
+    font-size: 16px;
+}
+
+p {
+    margin-bottom: 5px;
+    margin-top: 0px;
+    font-family: "Open Sans", serif;
+    font-size: 16px;
+    font-weight: 400;
+    font-style: normal;
+    font-variation-settings:"wdth" 100;
+}
+
+pre {
+    margin: 0px;
+}
+
+.container {
+    width: 90%;
+    margin: 0 auto;
+    padding: 10px;
+    overflow: none;
+    padding-bottom: 70px;
+}
+
+.app-footer {
+    background: #777;
+    color: black;
+    font-size: 12px;
+    position:fixed;
+    left:0px;
+    bottom:0px;
+    height:80px;
+    width:100%;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-around;
+}
+
+.app-footer .mensagens {
+    display: flex;
+    flex-direction: row ;
+    justify-content: space-around;
+}
+
+.app-footer ul {
+    display: flex;
+    align-items: center;
+    justify-content: space-around;
+    list-style: none;
+}
+
+.app-footer ul li {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+.app-footer button {
+    color: #777;
+    background-color: transparent;
+    border-color: transparent;
+    border-radius: 50%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    font-size: 12px;
+}
+
+.app-footer img {
+    height: 30px;
+}
+
+nav {
+    background-color: #777;
+    display: flex;
+    justify-content:space-between;
+    width:100%;
+}
+
+nav form {
+    display: flex;
+    flex-direction: column;
+    margin-top: 3px;
+}
+
+nav form button {
+    margin-top: 5px;
+}
+
+nav .settings button {
+    padding: 5px 10px;
+    margin: 5px;
+    width: 25px;
+  }
+    </style>
+</head>
+<body>
+    <nav>
+        <form id="searchForm">
+          <label for="artistName">Artista:</label>
+          <input type="text" id="artistName" name="artistName" placeholder="Artist Name" required>
+      
+          <label for="songName">Música:</label>
+          <input type="text" id="songName" name="songName" placeholder="Song Name" required>
+      
+          <button type="button" id="searchCifraClub">Search Cifra Club</button>
+
+        </form>
+        <div class="settings">
+            <label for="keyDisplay">Key: </label>
+            <span id="keyDisplay"></span>
+            <button id="minusButton">-</button>
+            <button id="plusButton">+</button>
+        </div>
+    </nav>
+
+    
+    <div class="container">
+        {% if found_page == 'true' %}
+            <h1>{{ indexed_text.title }}</h1>
+            <h2>{{ indexed_text.author }}</h2>
+            <br>
+            {% for line in indexed_text.content %}
+                {% if line[0] == '<BR>'%}
+                    {{ line[1] | safe }}
+                {% else %}
+                    <p id='{{ line[0] }}'>{{ line[1] | safe }}</p>
+                {% endif %}
+            {% endfor %}
+        {% else %}
+            <h1>{{ indexed_text.message }}</h1>
+            <p><a href="{{ indexed_text.url }}">{{ indexed_text.url }}</a></p>
+        {% endif %}
+    </div>
+
+    <footer class="app-footer">
+        <div class="mensagens">
+            <div id="status">X</div>
+            <div id="packets">X</div>   
+        </div>
+        <div class="botuera">
+            <ul>
+                <li class="start-but">
+                    <button id="startRecord">
+                    <img src="{{ url_for('static', filename='icons/icons8-go-48.png') }}" alt="user">            
+                    START
+                    </button>
+                </li>
+                <li class="stop-but">
+                    <button id="stopRecord">
+                    <img src="{{ url_for('static', filename='icons/icons8-stop-48.png') }}" alt="As mais queridas">
+                    STOP
+                    </button>
+                </li>
+                <li class="reload-but">
+                    <button onclick="reload_page('/')">
+                    <img src="{{ url_for('static', filename='icons/icons8-reload-48.png') }}" alt="Configurações">
+                    Reload
+                    </button>
+                </li>
+                <li class="Search">
+                    <button onclick="reload_page('/')">
+                        <img src="{{ url_for('static', filename='icons/icons8-search-48.png') }}" alt="Identifique-se">
+                        Search Song
+                    </button>
+                </li>
+            </ul>
+        </div>
+    </footer>
+
+    <script>
+        let mediaRecorder;
+        let audioChunks = [];
+        let packets = 0;
+        let keepRunning = true
+        //const socket = io('', { transports: ['websocket'], });
+        const socket = io('');
+        const types = [
+                'audio/webm',
+                'audio/webm;codecs=opus',
+                'audio/ogg;codecs=opus'
+            ];
+        
+
+        function stopAndStart() {
+                if (keepRunning === true) {
+                mediaRecorder.stop();
+                mediaRecorder.start();
+                } else {mediaRecorder.stop()}
+            }
+        
+        // START RECORDING
+        document.getElementById('startRecord').onclick = async () => {
+            try {
+
+                socket.on('connect', () => {
+                    socket.send('Usuário conectado')
+                })
+                
+                types.forEach(type => {
+                    console.log(`${type} supported: ${MediaRecorder.isTypeSupported(type)}`);
+                });
+
+                socket.emit('launch_threads', 'go')
+
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    audio: {
+                        channelCount: 1,
+                        sampleRate: 16000
+                    }
+                });
+                
+                // Reset chunks array
+                audioChunks = [];
+                
+                mediaRecorder = new MediaRecorder(stream, {
+                    mimeType: 'audio/webm;codecs=opus',
+                    audioBitsPerSecond: 16000
+                });
+                
+                mediaRecorder.ondataavailable = (event) => {
+                    if (event.data.size > 0) {
+                        audioChunks.push(event.data);
+                    }
+                };
+                
+                // Handle recording stop
+                mediaRecorder.onstop = async () => {
+                    // Create a proper Blob from all chunks
+                    const audioBlob = new Blob(audioChunks, { type: 'audio/webm;codecs=opus' });
+                    console.log('Final blob size:', audioBlob.size);
+                    
+                    // Convert Blob to ArrayBuffer
+                    const arrayBuffer = await audioBlob.arrayBuffer();
+                    
+                    // Convert ArrayBuffer to Base64
+                    const base64Data = btoa(
+                        new Uint8Array(arrayBuffer)
+                            .reduce((data, byte) => data + String.fromCharCode(byte), '')
+                    );
+                    
+                    // Send the complete audio data
+                    socket.emit('audio_data', { audio: base64Data });
+                    packets = packets + 1
+                    
+                    // Reset chunks array
+                    audioChunks = [];
+                    document.getElementById('status').textContent = 'Sent audio data';
+                    document.getElementById('packets').textContent = 'Sent packet ' + packets;
+
+                };
+                
+                // Start recording with 1-second chunks
+                mediaRecorder.start(1000);
+                document.getElementById('status').textContent = 'Recording...';
+
+                setInterval(stopAndStart,500);
+
+                socket.on('big_blob', (size) => {
+                    console.log('bigblob on queue:', size);
+                    });
+
+                socket.on('index_info', (data) => {
+                const paragraphId = data.index; // Obtém o ID do parágrafo do JSON
+                const minimo = data.minimo;
+                const incerteza = data.incerteza;
+                const paragraph = document.getElementById(paragraphId); // Encontra o parágrafo pelo ID
+                console.log('Received data:', data);
+                if (paragraph) {
+                    if (incerteza < minimo) {
+                        scrollToElement(paragraph, 3000);
+                        changeParagraphColors(paragraph);
+                    } else {
+                        console.log(`Alta incerteza no audio: ${incerteza} >= ${minimo}.`);
+                    }
+                    //scrollToElement(paragraph, 3000);
+                    //changeParagraphColors(paragraph);
+                } else {
+                    console.log(`Parágrafo com ID ${paragraphId} não encontrado.`);
+                }
+            });
+                
+            } catch (err) {
+                console.error('Error starting recording:', err);
+                document.getElementById('status').textContent = 'Error: ' + err.message;
+            }
+        };
+        
+        // STOP RECORDING
+        document.getElementById('stopRecord').onclick = () => {
+            keepRunning = false
+            
+            if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+                mediaRecorder.stop();
+                socket.emit('launch_threads', 'stop')
+                document.getElementById('status').textContent = 'Processing...';
+            }
+            location.reload();
+        };
+
+        socket.on('connect', () => {
+            document.getElementById('status').textContent = 'Connected to server';
+            console.log("connected")
+        });
+
+        socket.on('error', (error) => {
+            console.error('Server error:', error);
+            document.getElementById('status').textContent = 'Server error: ' + error;
+        });
+
+        // AUTO SCROLLING
+        function scrollToElement(element, duration) {
+            const targetPosition = element.offsetTop;
+            const startPosition = window.pageYOffset;
+            const distance = targetPosition - startPosition;
+            let start = null;
+
+            function step(timestamp) {
+                if (!start) start = timestamp;
+                const progress = Math.min((timestamp - start) / duration, 1);
+                window.scrollTo(0, startPosition + distance * progress);
+                if (progress < 1) {
+                window.requestAnimationFrame(step);
+                }
+            }
+
+            window.requestAnimationFrame(step);
+        }
+
+        // COLORING
+        function changeParagraphColors(element) {
+            
+            if (!element) {
+                console.error("Paragraph not found.");
+                return;
+            }
+
+            // Set current paragraph color
+            element.style.color = "#AAAAAA";
+            //element.style.backgroundColor = "#GGGGGG";
+
+            // Change color of previous paragraphs
+            let prevParagraph = element.previousElementSibling;
+            while (prevParagraph && prevParagraph.tagName === "P") {
+                prevParagraph.style.color = "#AAAAAA";
+                //prevParagraph.style.backgroundColor = "#FFFFFF";
+                prevParagraph = prevParagraph.previousElementSibling;
+            }
+
+            // Change color of next two paragraphs
+            let nextParagraph = element.nextElementSibling;
+            let nextCount = 0;
+            while (nextParagraph && nextParagraph.tagName === "P" && nextCount < 2) {
+                nextParagraph.style.color = "#FFFFFF";
+                //nextParagraph.style.backgroundColor = "#00FF00";
+                nextParagraph = nextParagraph.nextElementSibling;
+                nextCount++;
+            }
+        }
+
+        // LOAD CIFRA
+        document.getElementById('searchCifraClub').addEventListener('click', function() {
+            let artist = document.getElementById('artistName').value.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-');
+            let song = document.getElementById('songName').value.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-');
+            if (artist && song) {
+                let url = `/search?artista=` + artist + '&musica=' + song;
+                window.location.href = url;
+            } else {
+                alert("Please enter both artist and song names.");
+            }
+        });
+
+        // KEY CHANGER
+
+        function getKeyValueFromUrl() {
+            const hash = window.location.hash;
+            if (hash) {
+            const match = hash.match(/#key=(\d+)/);
+            if (match) {
+                return parseInt(match[1]);
+            }
+            }
+            return null; // Key not found in URL
+        }
+
+        function updateKeyDisplay(key) {
+            const keyDisplay = document.getElementById('keyDisplay');
+            if (key !== null) {
+            keyDisplay.textContent = key;
+            } else {
+            keyDisplay.textContent = "";
+            }
+        }
+
+        function updateUrl(newKey) {
+            const songNameElement = document.querySelector('h1');
+            const artistNameElement = document.querySelector('h2');
+
+            if (!songNameElement || !artistNameElement) {
+                console.error("Song name or artist name elements not found.");
+                return; // Stop execution if elements are missing
+            }
+
+            const songName = songNameElement.textContent.trim();
+            const artistName = artistNameElement.textContent.trim();
+
+            // URL encoding for song and artist names (important for special characters)
+            const encodedSongName = encodeURIComponent(songName);
+            const encodedArtistName = encodeURIComponent(artistName);
+
+            const newUrl = `/search?artista=${encodedArtistName}&musica=${encodedSongName}&key=${newKey}`;
+            window.location.href = newUrl;
+            }
+
+        document.getElementById('searchCifraClub').addEventListener('click', function() {
+            let artist = document.getElementById('artistName').value.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-');
+            let song = document.getElementById('songName').value.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-');
+            if (artist && song) {
+                let url = `/search?artista=` + artist + '&musica=' + song;
+                window.location.href = url;
+            } else {
+                alert("Please enter both artist and song names.");
+            }
+        });
+
+        function handlePlusClick() {
+            let currentKey = getKeyValueFromUrl();
+            let newKey;
+
+            if (currentKey === null) {
+            newKey = 1;
+            } else {
+            newKey = currentKey + 1;
+            if (newKey > 13) {
+                newKey = 1;
+            }
+            }
+            updateUrl(newKey);
+        }
+
+        function handleMinusClick() {
+            let currentKey = getKeyValueFromUrl();
+            let newKey;
+
+            if (currentKey === null) {
+            newKey = 13;
+            } else {
+            newKey = currentKey - 1;
+            if (newKey < 1) {
+                newKey = 13;
+            }
+            }
+            updateUrl(newKey);
+        }
+
+        // Initial key display update
+        updateKeyDisplay(getKeyValueFromUrl());
+
+        document.getElementById('plusButton').addEventListener('click', handlePlusClick);
+        document.getElementById('minusButton').addEventListener('click', handleMinusClick);
+
+
+    </script>
+</body>
+</html>

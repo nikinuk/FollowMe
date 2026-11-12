@@ -1,0 +1,3 @@
+gcloud init
+gcloud builds submit --tag gcr.io/roliagem/index
+gcloud run deploy roliagem --image=gcr.io/roliagem/index --allow-unauthenticated --region=southamerica-east1 --platform=managed

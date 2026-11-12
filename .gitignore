@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+venv/
+.env
+
+# Modelos de ML (grandes, baixar separadamente)
+models/
+
+# Arquivos temporários de áudio gerados em runtime
+audio.webm
+webm_path
+*.wav
+
+# Jupyter
+.ipynb_checkpoints/
+
+# IDE / SO
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
