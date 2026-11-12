@@ -56,6 +56,10 @@ RECUO = 0
 # incerteza normalizada: distância de Levenshtein / tamanho da maior string (0 = igual, 1 = nada a ver)
 # calibrado com casos reais: matches corretos <= 0.43, errados/alucinações >= 0.63
 SIMILARIDADE_MINIMA = 0.5
+# penalidade por linha saltada: avançar para a linha seguinte é grátis; saltos
+# maiores exigem matches cada vez melhores (evita que um falso positivo distante
+# descarrile a posição). Voltar custa o dobro: a música quase sempre anda pra frente
+PENALIDADE_SALTO = 0.05
 
 recordings = Queue()
 transcriptions = Queue()
@@ -143,21 +147,31 @@ def partial_distance(a: str, b: str, metric=textdistance.levenshtein) -> float:
     return min(metric.normalized_distance(s, l[i:i + n]) for i in range(0, len(l) - n + 1 or 1))
 
 def best_line(text_list: list[str], phrase: str, current_line: int = -1, distance_metric=textdistance.levenshtein):
-    best_distance = float('inf')  # Initialize with infinity
+    best_score = float('inf')  # Initialize with infinity
     candidates = []
 
     for text_toup in text_list:
+        # normaliza a linha como a transcrição (acentos/pontuação), senão
+        # 'solidão,' vs 'solidao' cria um piso artificial de distância
+        line_norm = list_text(text_toup[0])
         # distância parcial: tolera fragmentos de linha e normaliza pelo tamanho
-        distance = partial_distance(phrase, text_toup[0], distance_metric)
-        if distance < best_distance:
-            best_distance = distance
+        distance = partial_distance(phrase, line_norm, distance_metric)
+        # penaliza saltos: ficar na linha atual ou ir à seguinte é grátis;
+        # cada linha saltada encarece o candidato (voltar custa o dobro)
+        if text_toup[1] > current_line:
+            gap_penalty = PENALIDADE_SALTO * (text_toup[1] - current_line - 1)
+        else:
+            gap_penalty = 2 * PENALIDADE_SALTO * (current_line - text_toup[1])
+        score = distance + gap_penalty
+        if score < best_score:
+            best_score = score
             candidates = [text_toup]
-        elif distance == best_distance:
+        elif score == best_score:
             # linhas repetidas (refrões) empatam; guarda todas as ocorrências
             candidates.append(text_toup)
 
     if not candidates:
-        return -1, best_distance, ""
+        return -1, best_score, ""
 
     # em caso de empate, prioriza a ocorrência mais próxima a partir da posição
     # ATUAL (inclusive): fragmentos repetidos da mesma linha ficam parados, e a
@@ -169,7 +183,7 @@ def best_line(text_list: list[str], phrase: str, current_line: int = -1, distanc
     else:
         best_text, bline = max(candidates, key=lambda c: c[1])
 
-    return bline, best_distance, best_text
+    return bline, best_score, best_text
 
 def find_best_line(block):
     global CarryOn
@@ -367,7 +381,9 @@ async def search():
         inner_html = re.sub(r'</?div[^>]*>', '', inner_html)
         html_text = inner_html.split('\n')
         indexed_text = cifra_scrolling_index(normalized_text, html_text, title=musica, author=artista)
-        starting_block = return_block(normalized_text,3,BLOCK_SIZE)
+        # janela inicial a partir da linha 0: começar em 3 tornava as três
+        # primeiras linhas da música inalcançáveis no início do seguimento
+        starting_block = return_block(normalized_text, 0, BLOCK_SIZE)
 
         return render_template('index.html', indexed_text=indexed_text, found_page='true')
 
