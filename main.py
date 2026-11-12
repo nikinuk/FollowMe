@@ -11,10 +11,10 @@ from pydub import AudioSegment
 
 # Console do Windows usa cp1252; sem isso, prints de transcrições com
 # caracteres especiais (ex.: ♪) derrubam as threads com UnicodeEncodeError
-sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
+sys.stderr.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 
-from queue import Queue
+from queue import Queue, Empty
 from threading import Thread
 from bs4 import BeautifulSoup
 from flask_socketio import SocketIO
@@ -159,10 +159,11 @@ def best_line(text_list: list[str], phrase: str, current_line: int = -1, distanc
     if not candidates:
         return -1, best_distance, ""
 
-    # em caso de empate, prioriza a ocorrência mais próxima ABAIXO da posição
-    # atual (a música sempre anda pra frente); se não houver nenhuma à frente,
-    # fica na ocorrência mais próxima para trás (não volta ao início)
-    ahead = [c for c in candidates if c[1] > current_line]
+    # em caso de empate, prioriza a ocorrência mais próxima a partir da posição
+    # ATUAL (inclusive): fragmentos repetidos da mesma linha ficam parados, e a
+    # música só anda quando uma linha distinta à frente casa melhor; se não
+    # houver candidato na atual/à frente, fica na ocorrência mais próxima atrás
+    ahead = [c for c in candidates if c[1] >= current_line]
     if ahead:
         best_text, bline = min(ahead, key=lambda c: c[1])
     else:
@@ -172,12 +173,17 @@ def best_line(text_list: list[str], phrase: str, current_line: int = -1, distanc
 
 def find_best_line(block):
     global CarryOn
-    try:
-        # posição atual na música; começa logo antes da janela inicial
-        current_line = block[0][1] - 1 if block else -1
-        while CarryOn:
+    # posição atual na música; começa na primeira linha da janela inicial
+    current_line = block[0][1] if block else -1
+    while CarryOn:
+        try:
+            # timeout curto apenas para reavaliar CarryOn; silêncio longo
+            # (intro/solo) não pode derrubar a thread
+            phrase = transcriptions.get(block=True, timeout=2)
+        except Empty:
+            continue
+        try:
             t0 = time.time()
-            phrase = transcriptions.get(block=True, timeout=30)
             # normaliza a transcrição (pontuação/caixa/acentos) para comparar
             # em pé de igualdade com as linhas já normalizadas da letra
             phrase = list_text(phrase)
@@ -193,23 +199,20 @@ def find_best_line(block):
             current_line = new_start_line
             block = return_block(normalized_text, new_start_line-RECUO, BLOCK_SIZE)
             time_log.append({'find_best_line': time.time()-t0})
-    except KeyboardInterrupt:
-        print("KeyboardInterrupt on find_best_line")
-    except Exception as e:
-        print(e)
-    finally:
-        print("Exiting")
-        #exit system on keyboard interrupt
-        CarryOn = False
+        except Exception as e:
+            # loga e segue; um erro pontual não deve parar o seguimento
+            print("Erro em find_best_line:", e)
+    print("find_best_line encerrada")
 
 def speech_recognition(prompt): 
     global CarryOn
-    try:
-        while CarryOn:
+    while CarryOn:
+        try:
+            rec_frames = recordings.get(block=True, timeout=2)
+        except Empty:
+            continue
+        try:
             t0 = time.time()
-            rec_frames = recordings.get()
-            #rec.AcceptWaveform(rec_frames)
-            #result = rec.Result()
             # o prompt com linhas da música guia o Whisper (vocabulário e idioma),
             # reduzindo alucinações em trechos de silêncio/ruído
             result = transcribe(rec_frames, prompt=prompt)
@@ -218,34 +221,32 @@ def speech_recognition(prompt):
             if len(text) > 3:
                 transcriptions.put(text)
             time_log.append({'speech_recognition': time.time()-t0})
-            
-    except KeyboardInterrupt:
-        print("KeyboardInterrupt on speech_recognition")
+        except Exception as e:
+            print("Erro em speech_recognition:", e)
+    print("speech_recognition encerrada")
+
+# referências das threads ativas para impedir instâncias duplicadas
+transcribe_thread = None
+process_thread = None
 
 def start_threads(block):
-    global CarryOn
+    global CarryOn, transcribe_thread, process_thread
+    # cliques repetidos em START criavam threads duplicadas competindo pelas
+    # mesmas filas, cada uma com sua própria janela -> saltos erráticos
+    if transcribe_thread is not None and transcribe_thread.is_alive():
+        print("Threads já em execução; START ignorado")
+        return
     CarryOn = True
-    try:
-        prompts = "\n".join([line[0] for line in block])
-        transcribe = Thread(target=speech_recognition, args=(prompts,), daemon=True)
-        transcribe.start()
-        process = Thread(target=find_best_line, args=(block,), daemon=True)
-        process.start()
-    except KeyboardInterrupt:
-        transcribe.join()
-        process.join()
-        print("KeyboardInterrupt on start_recording")
+    prompts = "\n".join([line[0] for line in block])
+    transcribe_thread = Thread(target=speech_recognition, args=(prompts,), daemon=True)
+    transcribe_thread.start()
+    process_thread = Thread(target=find_best_line, args=(block,), daemon=True)
+    process_thread.start()
 
 def stop_threads():
     global CarryOn
     CarryOn = False
-    try:
-        transcribe.join()
-        #process.join()
-        index()
-        print("Stopping threads")
-    except:
-        pass
+    print("Stopping threads")
 
 # Abrir arquivo texto "Procissão.txt" separando linha a linha
 with open("musicas/procissao.txt", "r", encoding="utf-8") as f:
