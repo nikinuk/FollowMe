@@ -1,22 +1,12 @@
 import os
 import io
 import re
-import json
-import wave
 import time
-import urllib
 import base64
 import aiohttp
-import asyncio
-import requests
-import tempfile
-import subprocess
 import unicodedata
 import textdistance
 from pydub import AudioSegment
-
-import numpy as np
-import soundfile as sf
 
 from queue import Queue
 from threading import Thread
@@ -25,7 +15,6 @@ from flask_socketio import SocketIO
 from flask import Flask, render_template, request
 #from vosk import Model, KaldiRecognizer
 from openai import OpenAI  # for making OpenAI API calls
-from flask_socketio import emit
 
 from fme.scraping import cifra_normalizer, cifra_scrolling_index, text_normalizer, text_scrolling_index
 
