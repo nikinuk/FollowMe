@@ -1,6 +1,6 @@
 ﻿gcloud auth login
 gcloud builds submit --tag gcr.io/roliagem/followme --project roliagem
-gcloud run deploy followme --image=gcr.io/roliagem/followme --allow-unauthenticated --region=southamerica-east1 --platform=managed --project=roliagem --set-env-vars=OPENAI_API_KEY=...,NO_SPEECH_PROB_MAX=...,LINHAS_PROMPT=...,GCS_BUCKET=repositorio-usuario --timeout=300
+gcloud run deploy followme --image=gcr.io/roliagem/followme --allow-unauthenticated --region=southamerica-east1 --platform=managed --project=roliagem --timeout=300
 
 # URL do serviço: https://followme-267047910146.southamerica-east1.run.app
 # Obs: o .env NAO vai para a imagem (.dockerignore); as variaveis sao passadas no deploy via --set-env-vars

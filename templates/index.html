@@ -428,6 +428,49 @@ p.expected-line-2 {
 }
 
 .editor-overlay .editor-actions .btn { margin-bottom: 0; }
+
+/* popup de custo da sessão (whisper-1) */
+.cost-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 60;
+    background: rgba(0, 0, 0, 0.55);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+}
+
+.cost-overlay[hidden] { display: none; }
+
+.cost-modal {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 22px 26px;
+    max-width: 340px;
+    width: 100%;
+    text-align: center;
+    color: var(--text);
+}
+
+.cost-modal h3 { margin: 0 0 12px; }
+
+.cost-modal p { margin: 6px 0; }
+
+.cost-modal .cost-value {
+    font-size: 24px;
+    font-weight: 700;
+    color: var(--accent);
+}
+
+.cost-modal .cost-note {
+    font-size: 12px;
+    color: var(--muted);
+    margin: 10px 0 14px;
+}
+
+.cost-modal .btn { margin-bottom: 0; }
     </style>
 </head>
 <body>
@@ -534,6 +577,17 @@ p.expected-line-2 {
         <div class="editor-actions">
             <button type="button" id="editorApply" class="btn btn-primary">Aplicar e salvar</button>
             <button type="button" id="editorCancel" class="btn btn-secondary">Cancelar</button>
+        </div>
+    </div>
+
+    <div id="costOverlay" class="cost-overlay" hidden>
+        <div class="cost-modal">
+            <h3>Resumo da sessão</h3>
+            <p>Áudio transcrito: <b id="costTime"></b></p>
+            <p>Custo estimado (whisper-1):</p>
+            <p class="cost-value" id="costValue"></p>
+            <p class="cost-note" id="costNote"></p>
+            <button type="button" id="costClose" class="btn btn-primary">OK</button>
         </div>
     </div>
 
@@ -809,6 +863,9 @@ p.expected-line-2 {
         }
         
         // STOP RECORDING
+        // reload adiado: aguarda o resumo de custo da sessão chegar do servidor
+        let costReloadTimer = null;
+
         function stopRecording() {
             keepRunning = false
             
@@ -816,10 +873,36 @@ p.expected-line-2 {
                 mediaRecorder.stop();
                 socket.emit('launch_threads', 'stop')
                 document.getElementById('status').textContent = 'Processing...';
+                setStreaming(false);
+                // fallback: se o evento session_cost não chegar, recarrega mesmo assim
+                costReloadTimer = setTimeout(() => location.reload(), 12000);
+            } else {
+                setStreaming(false);
+                location.reload();
             }
-            setStreaming(false);
-            location.reload();
         }
+
+        // popup com o consumo e custo estimado da sessão de transcrição
+        socket.on('session_cost', (data) => {
+            if (costReloadTimer) {
+                clearTimeout(costReloadTimer);
+                costReloadTimer = null;
+            }
+            const min = Math.floor(data.segundos / 60);
+            const seg = Math.round(data.segundos % 60);
+            document.getElementById('costTime').textContent =
+                (min > 0 ? min + ' min ' : '') + seg + ' s';
+            document.getElementById('costValue').textContent =
+                'US$ ' + data.custo_usd.toFixed(4);
+            document.getElementById('costNote').textContent =
+                'Estimativa: US$ ' + data.preco_por_minuto.toFixed(3) + ' por minuto de áudio (whisper-1).';
+            document.getElementById('costOverlay').hidden = false;
+        });
+
+        document.getElementById('costClose').addEventListener('click', () => {
+            document.getElementById('costOverlay').hidden = true;
+            location.reload();
+        });
 
         socket.on('connect', () => {
             document.getElementById('status').textContent = 'Connected to server';
