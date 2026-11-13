@@ -23,7 +23,7 @@ from flask import Flask, render_template, request
 #from vosk import Model, KaldiRecognizer
 from openai import OpenAI  # for making OpenAI API calls
 
-from fme.scraping import cifra_normalizer, cifra_scrolling_index, text_normalizer, text_scrolling_index
+from fme.scraping import CHORD_TOKEN_RE, cifra_normalizer, cifra_scrolling_index, text_normalizer, text_scrolling_index
 
 #testing with whisper
 dotenv.load_dotenv()
@@ -463,13 +463,8 @@ def strip_tags(line: str) -> str:
     """Remove tags HTML (ex.: <b> dos acordes), preservando o espaçamento."""
     return re.sub(r'<[^>]+>', '', line)
 
-# token de acorde: fundamental A-G, acidente opcional e qualidades usuais
-# (m, maj, min, dim, aug, sus, add, M, +, -, º), dígitos, parênteses e baixo
-# invertido (/G#). Palavras comuns como "Deus" ou "Casa" não casam.
-CHORD_TOKEN_RE = re.compile(
-    r"^[A-G](?:#|b)?(?:(?:maj|min|sus|add|dim|aug|m|M|\+|-|º|°|[0-9])|\([^)]*\))*"
-    r"(?:/[A-G](?:#|b)?[0-9]*)?$"
-)
+# token de acorde: ver CHORD_TOKEN_RE em fme/scraping.py (compartilhado com o
+# cifra_normalizer, que usa a mesma regra para excluir linhas de acordes)
 
 def mark_chords(line: str) -> str:
     """
