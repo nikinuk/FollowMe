@@ -6,6 +6,7 @@ import time
 import base64
 import unicodedata
 import textdistance
+import dotenv
 from curl_cffi.requests import AsyncSession
 from pydub import AudioSegment
 
@@ -25,18 +26,26 @@ from openai import OpenAI  # for making OpenAI API calls
 from fme.scraping import cifra_normalizer, cifra_scrolling_index, text_normalizer, text_scrolling_index
 
 #testing with whisper
+dotenv.load_dotenv()
 client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
 global_audio_segments = []
 global_current_audio_size_bytes = 0 # To track raw byte size for decision
 
 # define a wrapper function for seeing how prompts affect transcriptions
-def transcribe(audio_filepath, prompt: str) -> str:
+def transcribe(audio_filepath, prompt: str):
     """Given a prompt, transcribe the audio file."""
     transcript = client.audio.transcriptions.create(
         file=open(audio_filepath, "rb"),
         model="whisper-1",
         prompt=prompt,
+        # determinístico e fixado em pt-BR: reduz alucinações e evita que o
+        # Whisper detecte o idioma errado em trechos instrumentais/ruidosos
+        temperature=0,
+        language="pt",
+        # verbose_json devolve segmentos com no_speech_prob e avg_logprob,
+        # permitindo descartar "letras falsas" geradas em trechos instrumentais
+        response_format="verbose_json",
     )
     return transcript
 
@@ -63,11 +72,25 @@ SIMILARIDADE_MINIMA = 0.5
 # maiores exigem matches cada vez melhores (evita que um falso positivo distante
 # descarrile a posição). Voltar custa o dobro: a música quase sempre anda pra frente
 PENALIDADE_SALTO = 0.05
+# prompt dinâmico: quantas linhas da janela de comparação atual são enviadas
+# como contexto ao Whisper (vocabulário esperado nos próximos trechos)
+LINHAS_PROMPT = int(os.environ.get("LINHAS_PROMPT", 3))
+# segmentos com no_speech_prob acima deste limite são tratados como
+# instrumental/silêncio e descartados (evita que o prompt vire "letra falsa")
+NO_SPEECH_PROB_MAX = float(os.environ.get("NO_SPEECH_PROB_MAX", 0.6))
 
 recordings = Queue()
 transcriptions = Queue()
 time_log = []
 CarryOn = True
+# prompt dinâmico compartilhado entre as threads: find_best_line atualiza
+# conforme a janela avança e speech_recognition lê a cada transcrição
+# (atribuição de string é atômica sob o GIL, dispensa lock)
+current_prompt = ""
+
+def build_prompt(block) -> str:
+    """Monta o prompt do Whisper com as primeiras LINHAS_PROMPT linhas da janela."""
+    return "\n".join([line[0] for line in block[:LINHAS_PROMPT]])
 
 # Lançat modelo Vosk
 #path_modelo = r"models/vosk-model-small-pt-0.3"
@@ -189,7 +212,7 @@ def best_line(text_list: list[str], phrase: str, current_line: int = -1, distanc
     return bline, best_score, best_text
 
 def find_best_line(block):
-    global CarryOn
+    global CarryOn, current_prompt
     # posição atual na música; começa na primeira linha da janela inicial
     current_line = block[0][1] if block else -1
     while CarryOn:
@@ -215,13 +238,15 @@ def find_best_line(block):
                 continue
             current_line = new_start_line
             block = return_block(normalized_text, new_start_line-RECUO, BLOCK_SIZE)
+            # janela avançou: renova o contexto enviado ao Whisper
+            current_prompt = build_prompt(block)
             time_log.append({'find_best_line': time.time()-t0})
         except Exception as e:
             # loga e segue; um erro pontual não deve parar o seguimento
             print("Erro em find_best_line:", e)
     print("find_best_line encerrada")
 
-def speech_recognition(prompt): 
+def speech_recognition(): 
     global CarryOn
     while CarryOn:
         try:
@@ -230,10 +255,19 @@ def speech_recognition(prompt):
             continue
         try:
             t0 = time.time()
-            # o prompt com linhas da música guia o Whisper (vocabulário e idioma),
-            # reduzindo alucinações em trechos de silêncio/ruído
-            result = transcribe(rec_frames, prompt=prompt)
-            text = result.text
+            # o prompt dinâmico com as próximas linhas da música guia o Whisper
+            # (vocabulário e idioma), reduzindo alucinações em silêncio/ruído
+            result = transcribe(rec_frames, prompt=current_prompt)
+            # filtra segmento a segmento: no_speech_prob alto = instrumental,
+            # o texto é alucinação (geralmente eco do prompt) e deve ser descartado
+            kept = []
+            for seg in (result.segments or []):
+                if seg.no_speech_prob > NO_SPEECH_PROB_MAX:
+                    print(f"segmento descartado (no_speech_prob={seg.no_speech_prob:.2f}, avg_logprob={seg.avg_logprob:.2f}):{seg.text}")
+                else:
+                    print(f"segmento aceito (no_speech_prob={seg.no_speech_prob:.2f}, avg_logprob={seg.avg_logprob:.2f}):{seg.text}")
+                    kept.append(seg.text)
+            text = " ".join(kept).strip()
             print("transcription:",text)
             if len(text) > 3:
                 transcriptions.put(text)
@@ -247,15 +281,15 @@ transcribe_thread = None
 process_thread = None
 
 def start_threads(block):
-    global CarryOn, transcribe_thread, process_thread
+    global CarryOn, transcribe_thread, process_thread, current_prompt
     # cliques repetidos em START criavam threads duplicadas competindo pelas
     # mesmas filas, cada uma com sua própria janela -> saltos erráticos
     if transcribe_thread is not None and transcribe_thread.is_alive():
         print("Threads já em execução; START ignorado")
         return
     CarryOn = True
-    prompts = "\n".join([line[0] for line in block])
-    transcribe_thread = Thread(target=speech_recognition, args=(prompts,), daemon=True)
+    current_prompt = build_prompt(block)
+    transcribe_thread = Thread(target=speech_recognition, daemon=True)
     transcribe_thread.start()
     process_thread = Thread(target=find_best_line, args=(block,), daemon=True)
     process_thread.start()
