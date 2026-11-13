@@ -70,6 +70,16 @@ p.expected-line {
     text-shadow: 0 0 0.6px currentColor, 0 0 0.6px currentColor;
 }
 
+/* linha seguinte à próxima esperada: destaque marca-texto azul, para o
+   cantor que se adianta à detecção não perder a referência */
+p.expected-line-2 {
+    background-color: rgba(77, 163, 255, 0.22);
+    color: #e4f1ff;
+    border-radius: 3px;
+    width: fit-content;
+    text-shadow: 0 0 0.6px currentColor, 0 0 0.6px currentColor;
+}
+
 .container {
     width: 100%;
     max-width: 900px;
@@ -422,7 +432,7 @@ p.expected-line {
 </head>
 <body>
     <header class="app-header">
-        <a class="brand" href="/">Follow<span>Me</span></a>
+        <a class="brand" href="/">Follow<span>U</span></a>
         <div class="header-actions">
             <button type="button" class="icon-btn" id="fontMinus" aria-label="Diminuir fonte" title="Diminuir fonte">A−</button>
             <button type="button" class="icon-btn" id="fontPlus" aria-label="Aumentar fonte" title="Aumentar fonte">A+</button>
@@ -478,14 +488,21 @@ p.expected-line {
             <h3>Usuário</h3>
             <button type="button" class="panel-close" aria-label="Fechar">&times;</button>
         </div>
-        <p class="panel-note">Entre para sincronizar sua biblioteca de cifras entre dispositivos.</p>
-        <label class="field">E-mail
-            <input type="email" id="loginEmail" placeholder="voce@email.com" autocomplete="username">
-        </label>
-        <label class="field">Senha
-            <input type="password" id="loginPassword" placeholder="••••••••" autocomplete="current-password">
-        </label>
-        <button type="button" id="loginButton" class="btn btn-primary">Entrar</button>
+        <p class="panel-note">Entre para guardar sua biblioteca de cifras na nuvem. No primeiro
+        acesso com um e-mail a conta é criada automaticamente com a senha informada.</p>
+        <div id="loginForm">
+            <label class="field">E-mail
+                <input type="email" id="loginEmail" placeholder="voce@email.com" autocomplete="username">
+            </label>
+            <label class="field">Senha
+                <input type="password" id="loginPassword" placeholder="••••••••" autocomplete="current-password">
+            </label>
+            <button type="button" id="loginButton" class="btn btn-primary">Entrar</button>
+        </div>
+        <div id="loggedBox" hidden>
+            <p class="panel-note">Conectado como <b id="loggedEmail"></b>.</p>
+            <button type="button" id="logoutButton" class="btn btn-secondary">Sair</button>
+        </div>
         <p class="panel-note" id="loginMsg"></p>
     </aside>
 
@@ -634,10 +651,61 @@ p.expected-line {
 
         applyCifraFont();
 
-        // login (placeholder até o backend ter autenticação)
-        document.getElementById('loginButton').addEventListener('click', () => {
-            document.getElementById('loginMsg').textContent =
-                'O login ainda está em desenvolvimento — em breve sua biblioteca ficará vinculada à sua conta.';
+        // ===== Usuário: login simples (sessão via cookie) =====
+        const loginMsg = document.getElementById('loginMsg');
+
+        function setUserUI(email) {
+            document.getElementById('loginForm').hidden = !!email;
+            document.getElementById('loggedBox').hidden = !email;
+            if (email) document.getElementById('loggedEmail').textContent = email;
+        }
+
+        async function refreshUser() {
+            try {
+                const resp = await fetch('/whoami');
+                const data = await resp.json();
+                setUserUI(data.logado ? data.email : null);
+            } catch (err) {
+                console.error('Erro ao consultar usuário:', err);
+            }
+            loadSavedList();
+        }
+
+        document.getElementById('loginButton').addEventListener('click', async () => {
+            const email = document.getElementById('loginEmail').value.trim();
+            const senha = document.getElementById('loginPassword').value;
+            loginMsg.textContent = '';
+            try {
+                const resp = await fetch('/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email: email, senha: senha })
+                });
+                const data = await resp.json();
+                if (data.ok) {
+                    loginMsg.textContent = data.novo
+                        ? 'Conta criada! Sua biblioteca agora fica guardada na nuvem.'
+                        : 'Bem-vindo de volta!';
+                    document.getElementById('loginPassword').value = '';
+                    setUserUI(data.email);
+                    loadSavedList();
+                } else {
+                    loginMsg.textContent = data.error || 'Erro ao entrar.';
+                }
+            } catch (err) {
+                loginMsg.textContent = 'Erro ao entrar: ' + err.message;
+            }
+        });
+
+        document.getElementById('logoutButton').addEventListener('click', async () => {
+            try {
+                await fetch('/logout', { method: 'POST' });
+            } catch (err) {
+                console.error('Erro ao sair:', err);
+            }
+            loginMsg.textContent = '';
+            setUserUI(null);
+            loadSavedList();
         });
 
         // START RECORDING
@@ -765,7 +833,12 @@ p.expected-line {
 
         // AUTO SCROLLING
         function scrollToElement(element, duration) {
-            const targetPosition = element.offsetTop;
+            // alinha o topo da última linha reconhecida logo abaixo do header
+            // fixo (que antes a encobria, deixando visível só a linha seguinte)
+            const header = document.querySelector('.app-header');
+            const headerOffset = header ? header.offsetHeight : 0;
+            const elementTop = element.getBoundingClientRect().top + window.pageYOffset;
+            const targetPosition = Math.max(elementTop - headerOffset, 0);
             const startPosition = window.pageYOffset;
             const distance = targetPosition - startPosition;
             let start = null;
@@ -790,8 +863,9 @@ p.expected-line {
                 return;
             }
 
-            // remove o destaque da linha esperada anterior
+            // remove os destaques das linhas esperadas anteriores
             document.querySelectorAll('p.expected-line').forEach(p => p.classList.remove('expected-line'));
+            document.querySelectorAll('p.expected-line-2').forEach(p => p.classList.remove('expected-line-2'));
 
             // linha atual e anteriores (já reconhecidas) esmaecidas; pula as
             // linhas de acordes/<pre> em vez de parar nelas
@@ -814,8 +888,19 @@ p.expected-line {
                 nextParagraph.classList.add('expected-line');
             }
 
+            // linha seguinte à próxima: segundo <p> de letra depois da atual,
+            // destacada em azul para quem se adianta à detecção
+            let secondNextParagraph = nextParagraph ? nextParagraph.nextElementSibling : null;
+            while (secondNextParagraph && secondNextParagraph.tagName !== "P") {
+                secondNextParagraph = secondNextParagraph.nextElementSibling;
+            }
+            if (secondNextParagraph) {
+                secondNextParagraph.classList.add('expected-line-2');
+            }
+
             // linhas seguintes voltam ao normal (caso a posição tenha recuado)
-            let afterParagraph = nextParagraph ? nextParagraph.nextElementSibling : null;
+            let afterParagraph = secondNextParagraph ? secondNextParagraph.nextElementSibling
+                               : nextParagraph ? nextParagraph.nextElementSibling : null;
             while (afterParagraph) {
                 if (afterParagraph.tagName === "P") {
                     afterParagraph.style.color = "";
@@ -950,7 +1035,7 @@ p.expected-line {
             }
         });
 
-        loadSavedList();
+        refreshUser();
 
         // MODO EDIÇÃO
         const editorOverlay = document.getElementById('editorOverlay');

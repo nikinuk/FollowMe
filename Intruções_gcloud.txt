@@ -1,3 +1,12 @@
-gcloud init
-gcloud builds submit --tag gcr.io/roliagem/index
-gcloud run deploy roliagem --image=gcr.io/roliagem/index --allow-unauthenticated --region=southamerica-east1 --platform=managed
+﻿gcloud auth login
+gcloud builds submit --tag gcr.io/roliagem/followme --project roliagem
+gcloud run deploy followme --image=gcr.io/roliagem/followme --allow-unauthenticated --region=southamerica-east1 --platform=managed --project=roliagem --set-env-vars=OPENAI_API_KEY=...,NO_SPEECH_PROB_MAX=...,LINHAS_PROMPT=...,GCS_BUCKET=repositorio-usuario --timeout=300
+
+# URL do serviço: https://followme-267047910146.southamerica-east1.run.app
+# Obs: o .env NAO vai para a imagem (.dockerignore); as variaveis sao passadas no deploy via --set-env-vars
+
+# Biblioteca de cifras por usuario: bucket gs://repositorio-usuario (env var GCS_BUCKET).
+# A service account do Cloud Run precisa de acesso ao bucket (uma vez so):
+#   gcloud storage buckets add-iam-policy-binding gs://repositorio-usuario --member=serviceAccount:267047910146-compute@developer.gserviceaccount.com --role=roles/storage.objectAdmin --project=roliagem
+# Para testar o bucket em dev local: gcloud auth application-default login e definir GCS_BUCKET=repositorio-usuario no .env
+# Sem GCS_BUCKET (ou sem credenciais), usuarios logados salvam na pasta local usuarios/ e anonimos em musicas/ (como antes).

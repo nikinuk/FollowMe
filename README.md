@@ -44,7 +44,8 @@ Navegador (microfone) ──WebSocket──► Flask-SocketIO
 | `fme/scraping.py` | Normalização de texto e indexação de cifras (CifraClub) |
 | `templates/index.html` | Interface web (microfone, busca e rolagem) |
 | `static/icons/` | Ícones da interface |
-| `musicas/` | Letras locais (música padrão: `procissao.txt`) |
+| `musicas/` | Letras locais (música padrão: `procissao.txt`) e biblioteca do usuário anônimo |
+| `fme/storage.py` | Biblioteca de cifras por usuário (bucket GCS ou pastas locais) |
 | `Dockerfile` | Imagem para deploy (Python 3.11 + FFmpeg + gunicorn) |
 
 ## Requisitos
@@ -112,6 +113,12 @@ O container usa gunicorn e foi pensado para o Google Cloud Run (veja `Intruçõe
 ## Notas e limitações conhecidas
 
 - **Um usuário por vez**: o estado (letra atual, filas, janelas) é global no servidor.
+- **Login simples por e-mail/senha** (painel "Usuário"): no primeiro acesso a conta é criada
+  automaticamente. Com a variável de ambiente `GCS_BUCKET` definida (ex.: `repositorio-usuario`),
+  as cifras de usuários logados são guardadas no bucket em `usuarios/<id>/cifras/` e sobrevivem
+  ao reinício das instâncias do Cloud Run; sem o bucket, vão para a pasta local `usuarios/`.
+  Usuários anônimos continuam salvando em `musicas/` (efêmero na nuvem). A autenticação é
+  propositalmente básica (hash SHA-256 da senha, sem recuperação de conta).
 - A música padrão é carregada de `musicas/procissao.txt` na inicialização.
 - O projeto já usou [Vosk](https://alphacephei.com/vosk/) para reconhecimento offline (código comentado em `main.py`); hoje usa o Whisper via API.
 - A "incerteza" é a distância de Levenshtein bruta — linhas longas tendem a ter distâncias maiores.

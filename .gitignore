@@ -12,6 +12,9 @@ audio.webm
 webm_path
 *.wav
 
+# Contas/cifras de usuários salvas localmente em dev
+usuarios/
+
 # Jupyter
 .ipynb_checkpoints/
 

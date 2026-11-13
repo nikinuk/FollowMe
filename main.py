@@ -4,6 +4,7 @@ import re
 import sys
 import time
 import base64
+import datetime
 import unicodedata
 import textdistance
 import dotenv
@@ -19,11 +20,12 @@ from queue import Queue, Empty
 from threading import Thread
 from bs4 import BeautifulSoup
 from flask_socketio import SocketIO
-from flask import Flask, render_template, request
+from flask import Flask, render_template, request, session
 #from vosk import Model, KaldiRecognizer
 from openai import OpenAI  # for making OpenAI API calls
 
 from fme.scraping import CHORD_TOKEN_RE, cifra_normalizer, cifra_scrolling_index, text_normalizer, text_scrolling_index
+from fme.storage import UserStorage, normalize_user_id, hash_password
 
 #testing with whisper
 dotenv.load_dotenv()
@@ -52,6 +54,8 @@ def transcribe(audio_filepath, prompt: str):
 # flask and socketio starting
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'agrae5tergae4565675ytaghdasfg'
+# sessão longa: o usuário entra uma vez e o cookie mantém a identificação
+app.permanent_session_lifetime = datetime.timedelta(days=365)
 socketio = SocketIO(app, cors_allowed_origins="*")
 
 # global vars
@@ -80,6 +84,11 @@ LINHAS_PROMPT = int(os.environ.get("LINHAS_PROMPT", 3))
 NO_SPEECH_PROB_MAX = float(os.environ.get("NO_SPEECH_PROB_MAX", 0.6))
 # pasta local onde as cifras processadas são salvas/recuperadas
 MUSICAS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "musicas")
+# armazenamento por usuário: bucket GCS (GCS_BUCKET) quando logado, senão pastas locais
+user_store = UserStorage(
+    MUSICAS_DIR,
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "usuarios"),
+)
 
 recordings = Queue()
 transcriptions = Queue()
@@ -438,24 +447,61 @@ async def search():
                         'url': 'https://www.cifraclub.com.br/'}
         return render_template('index.html', indexed_text=indexed_text, found_page='false')
     
+@app.route('/login', methods=['POST'])
+def login():
+    """
+    Identificação simples: no primeiro acesso com um e-mail a conta é criada;
+    depois basta repetir a mesma senha. Sem recuperação de senha nem e-mail de
+    confirmação — o objetivo é só separar as cifras de cada usuário no bucket.
+    """
+    data = request.get_json(silent=True) or {}
+    email = str(data.get('email', '')).strip().lower()
+    senha = str(data.get('senha', ''))
+    if not email or '@' not in email or not senha:
+        return {'ok': False, 'error': 'Informe e-mail e senha.'}, 400
+
+    user = normalize_user_id(email)
+    stored = user_store.get_password_hash(user)
+    novo = stored is None
+    if novo:
+        user_store.set_password_hash(user, hash_password(senha))
+    elif stored != hash_password(senha):
+        return {'ok': False, 'error': 'Senha incorreta para este e-mail.'}, 401
+
+    session.permanent = True
+    session['user'] = user
+    session['email'] = email
+    return {'ok': True, 'email': email, 'novo': novo}
+
+@app.route('/logout', methods=['POST'])
+def logout():
+    session.pop('user', None)
+    session.pop('email', None)
+    return {'ok': True}
+
+@app.route('/whoami', methods=['GET'])
+def whoami():
+    return {'logado': 'user' in session, 'email': session.get('email')}
+
 @app.route('/save_cifra', methods=['POST'])
 def save_cifra():
-    """Salva a cifra processada atual em um .txt editável dentro de musicas/."""
+    """Salva a cifra processada atual na biblioteca do usuário (bucket ou local)."""
     if current_html_text is None or not isinstance(indexed_text, dict) or 'title' not in indexed_text:
         return {'ok': False, 'error': 'Nenhuma cifra carregada para salvar. Busque uma cifra primeiro.'}, 400
 
     title = str(indexed_text.get('title', '')).strip()
     author = str(indexed_text.get('author', '')).strip()
     filename = normalize_entry(author) + "__" + normalize_entry(title) + ".txt"
-    path = os.path.join(MUSICAS_DIR, filename)
+    # mesmo formato do musicas/procissao.txt: título, autor, linha em
+    # branco e o conteúdo (acordes preservados nas tags <b>)
+    content = (
+        title + "\n" + author + "\n\n"
+        + "\n".join(line.rstrip("\r") for line in current_html_text)
+        + "\n"
+    )
     try:
-        # mesmo formato do musicas/procissao.txt: título, autor, linha em
-        # branco e o conteúdo (acordes preservados nas tags <b>)
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(title + "\n" + author + "\n\n")
-            f.write("\n".join(line.rstrip("\r") for line in current_html_text))
-            f.write("\n")
-    except OSError as e:
+        user_store.write_cifra(session.get('user'), filename, content)
+    except Exception as e:
         return {'ok': False, 'error': f'Erro ao salvar arquivo: {e}'}, 500
     return {'ok': True, 'arquivo': filename}
 
@@ -538,12 +584,10 @@ def edit_cifra():
     html_text = [mark_chords(strip_tags(line).rstrip()) for line in content]
 
     filename = normalize_entry(author) + "__" + normalize_entry(title) + ".txt"
-    path = os.path.join(MUSICAS_DIR, filename)
+    content = title + "\n" + author + "\n\n" + "\n".join(html_text) + "\n"
     try:
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(title + "\n" + author + "\n\n")
-            f.write("\n".join(html_text) + "\n")
-    except OSError as e:
+        user_store.write_cifra(session.get('user'), filename, content)
+    except Exception as e:
         return {'ok': False, 'error': f'Erro ao salvar arquivo: {e}'}, 500
 
     install_cifra(title, author, html_text)
@@ -551,34 +595,22 @@ def edit_cifra():
 
 @app.route('/saved_cifras', methods=['GET'])
 def saved_cifras():
-    """Lista as cifras salvas em musicas/ (título e autor nas duas primeiras linhas)."""
-    cifras = []
-    for name in sorted(os.listdir(MUSICAS_DIR)):
-        if not name.endswith(".txt"):
-            continue
-        try:
-            with open(os.path.join(MUSICAS_DIR, name), "r", encoding="utf-8") as f:
-                file_title = f.readline().strip()
-                file_author = f.readline().strip()
-        except OSError:
-            continue
-        cifras.append({'arquivo': name, 'title': file_title, 'author': file_author})
-    return {'cifras': cifras}
+    """Lista as cifras salvas na biblioteca do usuário (título e autor nas duas primeiras linhas)."""
+    return {'cifras': user_store.list_cifras(session.get('user'))}
 
 @app.route('/load_cifra', methods=['GET'])
 def load_cifra():
     """Recarrega uma cifra salva, reprocessando o texto como na busca original."""
     global indexed_text
 
-    # basename barra path traversal (ex.: ..\..\arquivo)
-    arquivo = os.path.basename(request.args.get('arquivo', ''))
-    path = os.path.join(MUSICAS_DIR, arquivo)
-    if not arquivo.endswith('.txt') or not os.path.isfile(path):
+    # basename barra path traversal (ex.: ..\..\arquivo ou prefixos no bucket)
+    arquivo = os.path.basename(request.args.get('arquivo', '').replace('\\', '/'))
+    content = user_store.read_cifra(session.get('user'), arquivo) if arquivo.endswith('.txt') else None
+    if content is None:
         indexed_text = {'message': 'Cifra salva não encontrada.', 'url': '/'}
         return render_template('index.html', indexed_text=indexed_text, found_page='false')
 
-    with open(path, "r", encoding="utf-8") as f:
-        lines = f.read().splitlines()
+    lines = content.splitlines()
 
     title = lines[0].strip() if lines else arquivo
     author = lines[1].strip() if len(lines) > 1 else ''
