@@ -116,6 +116,14 @@ nav .settings button {
     margin: 5px;
     width: 25px;
   }
+
+nav .saved-cifras {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 5px;
+    margin: 3px;
+}
     </style>
 </head>
 <body>
@@ -130,6 +138,13 @@ nav .settings button {
           <button type="button" id="searchCifraClub">Search Cifra Club</button>
 
         </form>
+        <div class="saved-cifras">
+            <button type="button" id="saveCifra">Salvar cifra</button>
+            <select id="savedSongs">
+                <option value="">Cifras salvas...</option>
+            </select>
+            <button type="button" id="openSaved">Abrir</button>
+        </div>
         <div class="settings">
             <label for="keyDisplay">Key: </label>
             <span id="keyDisplay"></span>
@@ -476,6 +491,50 @@ nav .settings button {
             }
             updateUrl(newKey);
         }
+
+        // SALVAR / RECUPERAR CIFRAS
+        async function loadSavedList() {
+            try {
+                const resp = await fetch('/saved_cifras');
+                const data = await resp.json();
+                const select = document.getElementById('savedSongs');
+                select.innerHTML = '<option value="">Cifras salvas...</option>';
+                data.cifras.forEach(c => {
+                    const opt = document.createElement('option');
+                    opt.value = c.arquivo;
+                    opt.textContent = c.author ? `${c.title} — ${c.author}` : c.title;
+                    select.appendChild(opt);
+                });
+            } catch (err) {
+                console.error('Erro ao listar cifras salvas:', err);
+            }
+        }
+
+        document.getElementById('saveCifra').addEventListener('click', async () => {
+            try {
+                const resp = await fetch('/save_cifra', { method: 'POST' });
+                const data = await resp.json();
+                if (data.ok) {
+                    document.getElementById('status').textContent = 'Cifra salva: ' + data.arquivo;
+                    loadSavedList();
+                } else {
+                    alert(data.error || 'Erro ao salvar a cifra.');
+                }
+            } catch (err) {
+                alert('Erro ao salvar a cifra: ' + err.message);
+            }
+        });
+
+        document.getElementById('openSaved').addEventListener('click', () => {
+            const arquivo = document.getElementById('savedSongs').value;
+            if (arquivo) {
+                window.location.href = '/load_cifra?arquivo=' + encodeURIComponent(arquivo);
+            } else {
+                alert('Selecione uma cifra salva.');
+            }
+        });
+
+        loadSavedList();
 
         // Initial key display update
         updateKeyDisplay(getKeyValueFromUrl());

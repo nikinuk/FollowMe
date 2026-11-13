@@ -78,6 +78,8 @@ LINHAS_PROMPT = int(os.environ.get("LINHAS_PROMPT", 3))
 # segmentos com no_speech_prob acima deste limite são tratados como
 # instrumental/silêncio e descartados (evita que o prompt vire "letra falsa")
 NO_SPEECH_PROB_MAX = float(os.environ.get("NO_SPEECH_PROB_MAX", 0.6))
+# pasta local onde as cifras processadas são salvas/recuperadas
+MUSICAS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "musicas")
 
 recordings = Queue()
 transcriptions = Queue()
@@ -299,6 +301,10 @@ def stop_threads():
     CarryOn = False
     print("Stopping threads")
 
+# linhas HTML da última cifra carregada (acordes marcados com <b>), usadas
+# pela rota /save_cifra; None enquanto nenhuma cifra foi buscada/aberta
+current_html_text = None
+
 # Abrir arquivo texto "Procissão.txt" separando linha a linha
 with open("musicas/procissao.txt", "r", encoding="utf-8") as f:
     text = f.readlines()
@@ -381,6 +387,7 @@ async def search():
     global starting_block
     global normalized_text
     global indexed_text
+    global current_html_text
 
     artista = request.args.get('artista')
     musica = request.args.get('musica')
@@ -417,6 +424,7 @@ async def search():
         inner_html = pre.decode_contents().replace("\u200b", "")
         inner_html = re.sub(r'</?div[^>]*>', '', inner_html)
         html_text = inner_html.split('\n')
+        current_html_text = html_text
         indexed_text = cifra_scrolling_index(normalized_text, html_text, title=musica, author=artista)
         # janela inicial a partir da linha 0: começar em 3 tornava as três
         # primeiras linhas da música inalcançáveis no início do seguimento
@@ -430,5 +438,73 @@ async def search():
                         'url': 'https://www.cifraclub.com.br/'}
         return render_template('index.html', indexed_text=indexed_text, found_page='false')
     
+@app.route('/save_cifra', methods=['POST'])
+def save_cifra():
+    """Salva a cifra processada atual em um .txt editável dentro de musicas/."""
+    if current_html_text is None or not isinstance(indexed_text, dict) or 'title' not in indexed_text:
+        return {'ok': False, 'error': 'Nenhuma cifra carregada para salvar. Busque uma cifra primeiro.'}, 400
+
+    title = str(indexed_text.get('title', '')).strip()
+    author = str(indexed_text.get('author', '')).strip()
+    filename = normalize_entry(author) + "__" + normalize_entry(title) + ".txt"
+    path = os.path.join(MUSICAS_DIR, filename)
+    try:
+        # mesmo formato do musicas/procissao.txt: título, autor, linha em
+        # branco e o conteúdo (acordes preservados nas tags <b>)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(title + "\n" + author + "\n\n")
+            f.write("\n".join(line.rstrip("\r") for line in current_html_text))
+            f.write("\n")
+    except OSError as e:
+        return {'ok': False, 'error': f'Erro ao salvar arquivo: {e}'}, 500
+    return {'ok': True, 'arquivo': filename}
+
+@app.route('/saved_cifras', methods=['GET'])
+def saved_cifras():
+    """Lista as cifras salvas em musicas/ (título e autor nas duas primeiras linhas)."""
+    cifras = []
+    for name in sorted(os.listdir(MUSICAS_DIR)):
+        if not name.endswith(".txt"):
+            continue
+        try:
+            with open(os.path.join(MUSICAS_DIR, name), "r", encoding="utf-8") as f:
+                file_title = f.readline().strip()
+                file_author = f.readline().strip()
+        except OSError:
+            continue
+        cifras.append({'arquivo': name, 'title': file_title, 'author': file_author})
+    return {'cifras': cifras}
+
+@app.route('/load_cifra', methods=['GET'])
+def load_cifra():
+    """Recarrega uma cifra salva, reprocessando o texto como na busca original."""
+    global starting_block
+    global normalized_text
+    global indexed_text
+    global current_html_text
+
+    # basename barra path traversal (ex.: ..\..\arquivo)
+    arquivo = os.path.basename(request.args.get('arquivo', ''))
+    path = os.path.join(MUSICAS_DIR, arquivo)
+    if not arquivo.endswith('.txt') or not os.path.isfile(path):
+        indexed_text = {'message': 'Cifra salva não encontrada.', 'url': '/'}
+        return render_template('index.html', indexed_text=indexed_text, found_page='false')
+
+    with open(path, "r", encoding="utf-8") as f:
+        lines = f.read().splitlines()
+
+    title = lines[0].strip() if lines else arquivo
+    author = lines[1].strip() if len(lines) > 1 else ''
+    html_text = lines[3:]
+    # remove as tags <b> dos acordes para normalizar como texto puro,
+    # reaproveitando o mesmo pipeline da busca no CifraClub
+    plain_text = [re.sub(r'<[^>]+>', '', line) for line in html_text]
+    normalized_text = cifra_normalizer(plain_text)
+    indexed_text = cifra_scrolling_index(normalized_text, html_text, title=title, author=author)
+    current_html_text = html_text
+    starting_block = return_block(normalized_text, 0, BLOCK_SIZE)
+
+    return render_template('index.html', indexed_text=indexed_text, found_page='true')
+
 if __name__ == '__main__':
     socketio.run(app, debug=True)
