@@ -459,6 +459,101 @@ def save_cifra():
         return {'ok': False, 'error': f'Erro ao salvar arquivo: {e}'}, 500
     return {'ok': True, 'arquivo': filename}
 
+def strip_tags(line: str) -> str:
+    """Remove tags HTML (ex.: <b> dos acordes), preservando o espaçamento."""
+    return re.sub(r'<[^>]+>', '', line)
+
+# token de acorde: fundamental A-G, acidente opcional e qualidades usuais
+# (m, maj, min, dim, aug, sus, add, M, +, -, º), dígitos, parênteses e baixo
+# invertido (/G#). Palavras comuns como "Deus" ou "Casa" não casam.
+CHORD_TOKEN_RE = re.compile(
+    r"^[A-G](?:#|b)?(?:(?:maj|min|sus|add|dim|aug|m|M|\+|-|º|°|[0-9])|\([^)]*\))*"
+    r"(?:/[A-G](?:#|b)?[0-9]*)?$"
+)
+
+def mark_chords(line: str) -> str:
+    """
+    Reaplica o destaque <b> nos acordes de uma linha editada: se a linha for
+    majoritariamente de acordes (mesma heurística do cifra_normalizer), cada
+    token de acorde é envolvido em <b>...</b> sem alterar o espaçamento.
+    """
+    tokens = line.split()
+    # linhas de seção tipo [Refrão] e linhas de letra ficam intactas
+    if not tokens or ("[" in line and "]" in line):
+        return line
+    chordish = sum(1 for t in tokens if CHORD_TOKEN_RE.match(t))
+    if chordish / len(tokens) < 0.8:
+        return line
+    return re.sub(
+        r'\S+',
+        lambda m: "<b>" + m.group(0) + "</b>" if CHORD_TOKEN_RE.match(m.group(0)) else m.group(0),
+        line,
+    )
+
+def install_cifra(title: str, author: str, html_text: list[str]):
+    """Reprocessa html_text e instala a cifra como a atual (globais do seguimento)."""
+    global starting_block
+    global normalized_text
+    global indexed_text
+    global current_html_text
+
+    # remove as tags <b> dos acordes para normalizar como texto puro,
+    # reaproveitando o mesmo pipeline da busca no CifraClub
+    plain_text = [strip_tags(line) for line in html_text]
+    normalized_text = cifra_normalizer(plain_text)
+    indexed_text = cifra_scrolling_index(normalized_text, html_text, title=title, author=author)
+    current_html_text = html_text
+    starting_block = return_block(normalized_text, 0, BLOCK_SIZE)
+
+@app.route('/cifra_raw', methods=['GET'])
+def cifra_raw():
+    """Devolve a cifra atual como texto limpo (sem tags) para o modo edição."""
+    if current_html_text is None or not isinstance(indexed_text, dict) or 'title' not in indexed_text:
+        return {'ok': False, 'error': 'Nenhuma cifra carregada para editar. Busque ou abra uma cifra primeiro.'}, 400
+    conteudo = (
+        str(indexed_text.get('title', '')) + "\n"
+        + str(indexed_text.get('author', '')) + "\n\n"
+        + "\n".join(strip_tags(line) for line in current_html_text)
+    )
+    return {'ok': True, 'conteudo': conteudo}
+
+@app.route('/edit_cifra', methods=['POST'])
+def edit_cifra():
+    """
+    Aplica a edição feita no modo edição: remarca os acordes, salva o .txt em
+    musicas/ e reprocessa a cifra para o seguimento (sem mudar o algoritmo).
+    """
+    data = request.get_json(silent=True) or {}
+    lines = str(data.get('conteudo', '')).splitlines()
+    if len(lines) < 3:
+        return {'ok': False, 'error': 'Conteúdo muito curto: esperado título, autor e a cifra.'}, 400
+
+    title = strip_tags(lines[0]).strip()
+    author = strip_tags(lines[1]).strip()
+    if not title or not author:
+        return {'ok': False, 'error': 'As duas primeiras linhas devem conter o título e o autor.'}, 400
+
+    content = lines[2:]
+    # tolera o usuário ter removido/duplicado a linha em branco do cabeçalho
+    while content and not content[0].strip():
+        content = content[1:]
+    # qualquer tag colada pelo usuário é descartada (a página renderiza com
+    # |safe, então só o <b> remarcado aqui pode chegar ao HTML) e os acordes
+    # são remarcados preservando a posição editada
+    html_text = [mark_chords(strip_tags(line).rstrip()) for line in content]
+
+    filename = normalize_entry(author) + "__" + normalize_entry(title) + ".txt"
+    path = os.path.join(MUSICAS_DIR, filename)
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(title + "\n" + author + "\n\n")
+            f.write("\n".join(html_text) + "\n")
+    except OSError as e:
+        return {'ok': False, 'error': f'Erro ao salvar arquivo: {e}'}, 500
+
+    install_cifra(title, author, html_text)
+    return {'ok': True, 'arquivo': filename}
+
 @app.route('/saved_cifras', methods=['GET'])
 def saved_cifras():
     """Lista as cifras salvas em musicas/ (título e autor nas duas primeiras linhas)."""
@@ -478,10 +573,7 @@ def saved_cifras():
 @app.route('/load_cifra', methods=['GET'])
 def load_cifra():
     """Recarrega uma cifra salva, reprocessando o texto como na busca original."""
-    global starting_block
-    global normalized_text
     global indexed_text
-    global current_html_text
 
     # basename barra path traversal (ex.: ..\..\arquivo)
     arquivo = os.path.basename(request.args.get('arquivo', ''))
@@ -496,13 +588,7 @@ def load_cifra():
     title = lines[0].strip() if lines else arquivo
     author = lines[1].strip() if len(lines) > 1 else ''
     html_text = lines[3:]
-    # remove as tags <b> dos acordes para normalizar como texto puro,
-    # reaproveitando o mesmo pipeline da busca no CifraClub
-    plain_text = [re.sub(r'<[^>]+>', '', line) for line in html_text]
-    normalized_text = cifra_normalizer(plain_text)
-    indexed_text = cifra_scrolling_index(normalized_text, html_text, title=title, author=author)
-    current_html_text = html_text
-    starting_block = return_block(normalized_text, 0, BLOCK_SIZE)
+    install_cifra(title, author, html_text)
 
     return render_template('index.html', indexed_text=indexed_text, found_page='true')
 

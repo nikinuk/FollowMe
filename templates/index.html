@@ -124,6 +124,41 @@ nav .saved-cifras {
     gap: 5px;
     margin: 3px;
 }
+
+.editor-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 10;
+    background: #fff;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 10px;
+}
+
+.editor-overlay[hidden] {
+    display: none;
+}
+
+.editor-overlay .editor-header {
+    font-size: 13px;
+    color: #555;
+}
+
+.editor-overlay textarea {
+    flex: 1;
+    /* monoespaçada: mantém os acordes alinhados com as sílabas da letra */
+    font-family: Consolas, "Courier New", monospace;
+    font-size: 14px;
+    white-space: pre;
+    overflow: auto;
+    resize: none;
+}
+
+.editor-overlay .editor-actions {
+    display: flex;
+    gap: 10px;
+}
     </style>
 </head>
 <body>
@@ -140,6 +175,7 @@ nav .saved-cifras {
         </form>
         <div class="saved-cifras">
             <button type="button" id="saveCifra">Salvar cifra</button>
+            <button type="button" id="editCifra">Editar</button>
             <select id="savedSongs">
                 <option value="">Cifras salvas...</option>
             </select>
@@ -170,6 +206,19 @@ nav .saved-cifras {
             <h1>{{ indexed_text.message }}</h1>
             <p><a href="{{ indexed_text.url }}">{{ indexed_text.url }}</a></p>
         {% endif %}
+    </div>
+
+    <div id="editorOverlay" class="editor-overlay" hidden>
+        <div class="editor-header">
+            Modo edição — 1ª linha: título | 2ª linha: autor | demais linhas: cifra.
+            Copie e cole blocos livremente (ex.: duplicar o refrão); os acordes são
+            detectados e destacados novamente ao aplicar.
+        </div>
+        <textarea id="editorText" spellcheck="false" wrap="off"></textarea>
+        <div class="editor-actions">
+            <button type="button" id="editorApply">Aplicar e salvar</button>
+            <button type="button" id="editorCancel">Cancelar</button>
+        </div>
     </div>
 
     <footer class="app-footer">
@@ -535,6 +584,49 @@ nav .saved-cifras {
         });
 
         loadSavedList();
+
+        // MODO EDIÇÃO
+        const editorOverlay = document.getElementById('editorOverlay');
+        const editorText = document.getElementById('editorText');
+
+        document.getElementById('editCifra').addEventListener('click', async () => {
+            try {
+                const resp = await fetch('/cifra_raw');
+                const data = await resp.json();
+                if (!data.ok) {
+                    alert(data.error || 'Erro ao abrir o editor.');
+                    return;
+                }
+                editorText.value = data.conteudo;
+                editorOverlay.hidden = false;
+                editorText.focus();
+            } catch (err) {
+                alert('Erro ao abrir o editor: ' + err.message);
+            }
+        });
+
+        document.getElementById('editorCancel').addEventListener('click', () => {
+            editorOverlay.hidden = true;
+        });
+
+        document.getElementById('editorApply').addEventListener('click', async () => {
+            try {
+                const resp = await fetch('/edit_cifra', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ conteudo: editorText.value })
+                });
+                const data = await resp.json();
+                if (data.ok) {
+                    // recarrega a cifra já reprocessada a partir do arquivo salvo
+                    window.location.href = '/load_cifra?arquivo=' + encodeURIComponent(data.arquivo);
+                } else {
+                    alert(data.error || 'Erro ao aplicar a edição.');
+                }
+            } catch (err) {
+                alert('Erro ao aplicar a edição: ' + err.message);
+            }
+        });
 
         // Initial key display update
         updateKeyDisplay(getKeyValueFromUrl());
