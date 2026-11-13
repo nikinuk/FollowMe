@@ -5,141 +5,378 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#14171c">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Open+Sans:ital,wght@0,300..800;1,300..800&display=swap" rel="stylesheet">
     <style>
 
+:root {
+    --bg: #14171c;
+    --surface: #1d222a;
+    --surface-2: #262d38;
+    --border: #323a46;
+    --text: #e8ebef;
+    --muted: #97a1ad;
+    --accent: #ff6b35;
+    --live: #3ddc84;
+    --danger: #ff5252;
+    --cifra-font: 16px;
+    --header-h: 52px;
+    --controls-h: 72px;
+}
+
+* { box-sizing: border-box; }
+
 body {
-    font-family: "Open Sans", serif;
+    font-family: "Open Sans", sans-serif;
     font-optical-sizing: auto;
     font-weight: 400;
     font-style: normal;
     font-variation-settings:"wdth" 100;
-    margin-left: 24px;
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    padding-top: var(--header-h);
+    padding-bottom: calc(var(--controls-h) + env(safe-area-inset-bottom, 0px));
 }
 
 b {
-    color: orangered;
-    font-size: 16px;
+    color: var(--accent);
+    font-size: var(--cifra-font);
 }
 
 p {
     margin-bottom: 5px;
     margin-top: 0px;
-    font-family: "Open Sans", serif;
-    font-size: 16px;
+    font-size: var(--cifra-font);
+    line-height: 1.45;
     font-weight: 400;
-    font-style: normal;
-    font-variation-settings:"wdth" 100;
 }
 
 pre {
     margin: 0px;
+    font-size: var(--cifra-font);
 }
 
-/* próxima linha esperada: fundo verde-claro (caneta marca-texto) e negrito
-   simulado via text-shadow, que engrossa o traço sem alterar a largura dos
-   caracteres nem o espaçamento da fonte (font-weight mudaria o layout) */
+/* próxima linha esperada: destaque marca-texto verde sobre o tema escuro;
+   negrito simulado via text-shadow, que engrossa o traço sem alterar a
+   largura dos caracteres nem o espaçamento da fonte */
 p.expected-line {
-    background-color: #c9f7c5;
+    background-color: rgba(61, 220, 132, 0.22);
+    color: #e4ffee;
     border-radius: 3px;
     width: fit-content;
     text-shadow: 0 0 0.6px currentColor, 0 0 0.6px currentColor;
 }
 
 .container {
-    width: 90%;
+    width: 100%;
+    max-width: 900px;
     margin: 0 auto;
-    padding: 10px;
-    overflow: none;
-    padding-bottom: 70px;
+    padding: 14px 16px 32px;
 }
 
-.app-footer {
-    background: #777;
-    color: black;
-    font-size: 12px;
-    position:fixed;
-    left:0px;
-    bottom:0px;
-    height:80px;
-    width:100%;
-    display: flex;
-    flex-direction: column;
-    justify-content: space-around;
+.container h1 { font-size: 22px; margin: 0 0 2px; }
+
+.container h2 {
+    font-size: 15px;
+    font-weight: 500;
+    color: var(--muted);
+    margin: 0 0 6px;
 }
 
-.app-footer .mensagens {
-    display: flex;
-    flex-direction: row ;
-    justify-content: space-around;
-}
-
-.app-footer ul {
+/* ===== Header ===== */
+.app-header {
+    position: fixed;
+    top: 0; left: 0; right: 0;
+    height: var(--header-h);
     display: flex;
     align-items: center;
-    justify-content: space-around;
-    list-style: none;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 0 10px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    z-index: 32;
 }
 
-.app-footer ul li {
+.brand {
+    font-weight: 700;
+    font-size: 17px;
+    color: var(--text);
+    text-decoration: none;
+    white-space: nowrap;
+}
+
+.brand span { color: var(--accent); }
+
+.header-actions {
     display: flex;
-    flex-direction: column;
     align-items: center;
+    gap: 4px;
 }
 
-.app-footer button {
-    color: #777;
-    background-color: transparent;
-    border-color: transparent;
-    border-radius: 50%;
+.icon-btn {
+    width: 40px;
+    height: 40px;
     display: flex;
-    flex-direction: column;
     align-items: center;
-    font-size: 12px;
-}
-
-.app-footer img {
-    height: 30px;
-}
-
-nav {
-    background-color: #777;
-    display: flex;
-    justify-content:space-between;
-    width:100%;
-}
-
-nav form {
-    display: flex;
-    flex-direction: column;
-    margin-top: 3px;
-}
-
-nav form button {
-    margin-top: 5px;
-}
-
-nav .settings button {
-    padding: 5px 10px;
-    margin: 5px;
-    width: 25px;
-  }
-
-nav .saved-cifras {
-    display: flex;
-    flex-direction: column;
     justify-content: center;
-    gap: 5px;
-    margin: 3px;
+    background: transparent;
+    border: none;
+    border-radius: 10px;
+    color: var(--muted);
+    font-size: 14px;
+    font-weight: 600;
+    font-family: inherit;
+    cursor: pointer;
+}
+
+.icon-btn:hover, .icon-btn:active {
+    background: var(--surface-2);
+    color: var(--text);
+}
+
+.icon-btn svg {
+    width: 22px;
+    height: 22px;
+}
+
+/* ===== Painéis (busca, biblioteca, usuário) ===== */
+.panel-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.55);
+    z-index: 30;
+}
+
+.panel-backdrop[hidden] { display: none; }
+
+.panel {
+    position: fixed;
+    left: 0; right: 0; bottom: 0;
+    z-index: 31;
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+    border-radius: 16px 16px 0 0;
+    padding: 16px 16px calc(16px + env(safe-area-inset-bottom, 0px));
+    max-height: 80vh;
+    overflow-y: auto;
+}
+
+.panel[hidden] { display: none; }
+
+.panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+}
+
+.panel-header h3 { margin: 0; font-size: 16px; }
+
+.panel-close {
+    background: none;
+    border: none;
+    color: var(--muted);
+    font-size: 24px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 4px 8px;
+}
+
+.panel-note {
+    font-size: 13px;
+    color: var(--muted);
+    margin: 0 0 12px;
+    line-height: 1.4;
+}
+
+.field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-bottom: 12px;
+    font-size: 13px;
+    color: var(--muted);
+}
+
+.field input, .field select {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text);
+    padding: 10px 12px;
+    font-size: 15px;
+    font-family: inherit;
+    width: 100%;
+}
+
+.field input:focus, .field select:focus {
+    outline: none;
+    border-color: var(--accent);
+}
+
+.btn {
+    display: block;
+    width: 100%;
+    border: none;
+    border-radius: 10px;
+    padding: 12px;
+    font-size: 15px;
+    font-weight: 600;
+    font-family: inherit;
+    cursor: pointer;
+    margin-bottom: 10px;
+}
+
+.btn-primary {
+    background: var(--accent);
+    color: #fff;
+}
+
+.btn-secondary {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    color: var(--text);
+}
+
+.btn-row {
+    display: flex;
+    gap: 8px;
+}
+
+.btn-row .btn { margin-bottom: 0; }
+
+/* ===== Barra de controle ===== */
+.control-bar {
+    position: fixed;
+    left: 0; right: 0; bottom: 0;
+    height: calc(var(--controls-h) + env(safe-area-inset-bottom, 0px));
+    padding: 10px 12px calc(10px + env(safe-area-inset-bottom, 0px));
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    z-index: 20;
+}
+
+.record-btn {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 48px;
+    padding: 0 20px;
+    border: none;
+    border-radius: 24px;
+    background: var(--live);
+    color: #0c1116;
+    font-size: 15px;
+    font-weight: 700;
+    font-family: inherit;
+    cursor: pointer;
+}
+
+.record-btn.recording {
+    background: var(--danger);
+    color: #fff;
+}
+
+.stream-status {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.status-line {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--muted);
+}
+
+.status-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: #555e6a;
+    flex: 0 0 auto;
+}
+
+.stream-status.live .status-line { color: var(--live); }
+
+.stream-status.live .status-dot {
+    background: var(--live);
+    animation: pulse 1.4s infinite;
+}
+
+@keyframes pulse {
+    0% { box-shadow: 0 0 0 0 rgba(61, 220, 132, 0.5); }
+    70% { box-shadow: 0 0 0 8px rgba(61, 220, 132, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(61, 220, 132, 0); }
+}
+
+.sub-status {
+    font-size: 11px;
+    color: var(--muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.key-control {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.key-control button {
+    width: 38px;
+    height: 38px;
+    border-radius: 50%;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-size: 17px;
+    cursor: pointer;
+}
+
+.key-value {
+    min-width: 18px;
+    text-align: center;
+    font-size: 13px;
+    color: var(--text);
+}
+
+/* ===== Telas maiores (tablet / PC) ===== */
+@media (min-width: 768px) {
+    .panel {
+        left: auto;
+        right: 12px;
+        top: calc(var(--header-h) + 8px);
+        bottom: auto;
+        width: 380px;
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        max-height: calc(100vh - var(--header-h) - var(--controls-h) - 24px);
+    }
+
+    .container { padding: 24px 24px 40px; }
 }
 
 .editor-overlay {
     position: fixed;
     inset: 0;
-    z-index: 10;
-    background: #fff;
+    z-index: 40;
+    background: var(--bg);
     display: flex;
     flex-direction: column;
     gap: 8px;
@@ -152,7 +389,7 @@ nav .saved-cifras {
 
 .editor-overlay .editor-header {
     font-size: 13px;
-    color: #555;
+    color: var(--muted);
 }
 
 .editor-overlay textarea {
@@ -163,44 +400,96 @@ nav .saved-cifras {
     white-space: pre;
     overflow: auto;
     resize: none;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text);
+    padding: 10px;
+}
+
+.editor-overlay textarea:focus {
+    outline: none;
+    border-color: var(--accent);
 }
 
 .editor-overlay .editor-actions {
     display: flex;
     gap: 10px;
 }
+
+.editor-overlay .editor-actions .btn { margin-bottom: 0; }
     </style>
 </head>
 <body>
-    <nav>
-        <form id="searchForm">
-          <label for="artistName">Artista:</label>
-          <input type="text" id="artistName" name="artistName" placeholder="Artist Name" required>
-      
-          <label for="songName">Música:</label>
-          <input type="text" id="songName" name="songName" placeholder="Song Name" required>
-      
-          <button type="button" id="searchCifraClub">Search Cifra Club</button>
+    <header class="app-header">
+        <a class="brand" href="/">Follow<span>Me</span></a>
+        <div class="header-actions">
+            <button type="button" class="icon-btn" id="fontMinus" aria-label="Diminuir fonte" title="Diminuir fonte">A−</button>
+            <button type="button" class="icon-btn" id="fontPlus" aria-label="Aumentar fonte" title="Aumentar fonte">A+</button>
+            <button type="button" class="icon-btn" id="openSearch" aria-label="Buscar cifra" title="Buscar cifra">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.5" y2="16.5"/></svg>
+            </button>
+            <button type="button" class="icon-btn" id="openLibrary" aria-label="Biblioteca" title="Biblioteca">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+            </button>
+            <button type="button" class="icon-btn" id="openUser" aria-label="Usuário" title="Usuário">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+            </button>
+        </div>
+    </header>
 
+    <div id="panelBackdrop" class="panel-backdrop" hidden></div>
+
+    <aside id="searchPanel" class="panel" hidden>
+        <div class="panel-header">
+            <h3>Buscar no Cifra Club</h3>
+            <button type="button" class="panel-close" aria-label="Fechar">&times;</button>
+        </div>
+        <form id="searchForm" onsubmit="return false;">
+            <label class="field">Artista
+                <input type="text" id="artistName" name="artistName" placeholder="Ex.: Gilberto Gil" required>
+            </label>
+            <label class="field">Música
+                <input type="text" id="songName" name="songName" placeholder="Ex.: Procissão" required>
+            </label>
+            <button type="button" id="searchCifraClub" class="btn btn-primary">Buscar cifra</button>
         </form>
-        <div class="saved-cifras">
-            <button type="button" id="saveCifra">Salvar cifra</button>
-            <button type="button" id="editCifra">Editar</button>
-            <select id="savedSongs">
-                <option value="">Cifras salvas...</option>
-            </select>
-            <button type="button" id="openSaved">Abrir</button>
-        </div>
-        <div class="settings">
-            <label for="keyDisplay">Key: </label>
-            <span id="keyDisplay"></span>
-            <button id="minusButton">-</button>
-            <button id="plusButton">+</button>
-        </div>
-    </nav>
+    </aside>
 
-    
-    <div class="container">
+    <aside id="libraryPanel" class="panel" hidden>
+        <div class="panel-header">
+            <h3>Minha biblioteca</h3>
+            <button type="button" class="panel-close" aria-label="Fechar">&times;</button>
+        </div>
+        <label class="field">Cifras salvas
+            <select id="savedSongs">
+                <option value="">Selecione uma cifra...</option>
+            </select>
+        </label>
+        <button type="button" id="openSaved" class="btn btn-primary">Abrir cifra</button>
+        <div class="btn-row">
+            <button type="button" id="saveCifra" class="btn btn-secondary">Salvar cifra atual</button>
+            <button type="button" id="editCifra" class="btn btn-secondary">Editar cifra</button>
+        </div>
+    </aside>
+
+    <aside id="userPanel" class="panel" hidden>
+        <div class="panel-header">
+            <h3>Usuário</h3>
+            <button type="button" class="panel-close" aria-label="Fechar">&times;</button>
+        </div>
+        <p class="panel-note">Entre para sincronizar sua biblioteca de cifras entre dispositivos.</p>
+        <label class="field">E-mail
+            <input type="email" id="loginEmail" placeholder="voce@email.com" autocomplete="username">
+        </label>
+        <label class="field">Senha
+            <input type="password" id="loginPassword" placeholder="••••••••" autocomplete="current-password">
+        </label>
+        <button type="button" id="loginButton" class="btn btn-primary">Entrar</button>
+        <p class="panel-note" id="loginMsg"></p>
+    </aside>
+
+    <main class="container">
         {% if found_page == 'true' %}
             <h1>{{ indexed_text.title }}</h1>
             <h2>{{ indexed_text.author }}</h2>
@@ -216,7 +505,7 @@ nav .saved-cifras {
             <h1>{{ indexed_text.message }}</h1>
             <p><a href="{{ indexed_text.url }}">{{ indexed_text.url }}</a></p>
         {% endif %}
-    </div>
+    </main>
 
     <div id="editorOverlay" class="editor-overlay" hidden>
         <div class="editor-header">
@@ -226,43 +515,30 @@ nav .saved-cifras {
         </div>
         <textarea id="editorText" spellcheck="false" wrap="off"></textarea>
         <div class="editor-actions">
-            <button type="button" id="editorApply">Aplicar e salvar</button>
-            <button type="button" id="editorCancel">Cancelar</button>
+            <button type="button" id="editorApply" class="btn btn-primary">Aplicar e salvar</button>
+            <button type="button" id="editorCancel" class="btn btn-secondary">Cancelar</button>
         </div>
     </div>
 
-    <footer class="app-footer">
-        <div class="mensagens">
-            <div id="status">X</div>
-            <div id="packets">X</div>   
+    <footer class="control-bar">
+        <button type="button" id="toggleRecord" class="record-btn">
+            <span id="toggleIcon">▶</span>
+            <span id="toggleLabel">Iniciar</span>
+        </button>
+        <div class="stream-status" id="streamStatus">
+            <div class="status-line">
+                <span class="status-dot"></span>
+                <span id="statusLabel">Parado</span>
+            </div>
+            <div class="sub-status">
+                <span id="status"></span>
+                <span id="packets"></span>
+            </div>
         </div>
-        <div class="botuera">
-            <ul>
-                <li class="start-but">
-                    <button id="startRecord">
-                    <img src="{{ url_for('static', filename='icons/icons8-go-48.png') }}" alt="user">            
-                    START
-                    </button>
-                </li>
-                <li class="stop-but">
-                    <button id="stopRecord">
-                    <img src="{{ url_for('static', filename='icons/icons8-stop-48.png') }}" alt="As mais queridas">
-                    STOP
-                    </button>
-                </li>
-                <li class="reload-but">
-                    <button onclick="reload_page('/')">
-                    <img src="{{ url_for('static', filename='icons/icons8-reload-48.png') }}" alt="Configurações">
-                    Reload
-                    </button>
-                </li>
-                <li class="Search">
-                    <button onclick="reload_page('/')">
-                        <img src="{{ url_for('static', filename='icons/icons8-search-48.png') }}" alt="Identifique-se">
-                        Search Song
-                    </button>
-                </li>
-            </ul>
+        <div class="key-control">
+            <button type="button" id="minusButton" aria-label="Baixar meio tom" title="Baixar meio tom">−</button>
+            <span class="key-value" id="keyDisplay"></span>
+            <button type="button" id="plusButton" aria-label="Subir meio tom" title="Subir meio tom">+</button>
         </div>
     </footer>
 
@@ -287,9 +563,87 @@ nav .saved-cifras {
                 } else {mediaRecorder.stop()}
             }
         
+        // ===== UI: painéis, streaming e fonte =====
+        const panelBackdrop = document.getElementById('panelBackdrop');
+        const panels = [
+            document.getElementById('searchPanel'),
+            document.getElementById('libraryPanel'),
+            document.getElementById('userPanel')
+        ];
+
+        function closePanels() {
+            panels.forEach(p => p.hidden = true);
+            panelBackdrop.hidden = true;
+        }
+
+        function openPanel(panel) {
+            closePanels();
+            panel.hidden = false;
+            panelBackdrop.hidden = false;
+        }
+
+        document.getElementById('openSearch').addEventListener('click', () => openPanel(panels[0]));
+        document.getElementById('openLibrary').addEventListener('click', () => openPanel(panels[1]));
+        document.getElementById('openUser').addEventListener('click', () => openPanel(panels[2]));
+        panelBackdrop.addEventListener('click', closePanels);
+        document.querySelectorAll('.panel-close').forEach(b => b.addEventListener('click', closePanels));
+
+        // indicador de streaming + botão único iniciar/parar
+        let isRecording = false;
+        const streamStatus = document.getElementById('streamStatus');
+        const statusLabel = document.getElementById('statusLabel');
+        const toggleBtn = document.getElementById('toggleRecord');
+        const toggleLabel = document.getElementById('toggleLabel');
+        const toggleIcon = document.getElementById('toggleIcon');
+
+        function setStreaming(on) {
+            isRecording = on;
+            streamStatus.classList.toggle('live', on);
+            statusLabel.textContent = on ? 'AO VIVO' : 'Parado';
+            toggleBtn.classList.toggle('recording', on);
+            toggleLabel.textContent = on ? 'Parar' : 'Iniciar';
+            toggleIcon.textContent = on ? '■' : '▶';
+        }
+
+        toggleBtn.addEventListener('click', () => {
+            if (isRecording) {
+                stopRecording();
+            } else {
+                startRecording();
+            }
+        });
+
+        // tamanho da fonte da cifra (persistido no aparelho)
+        const FONT_KEY = 'cifraFontSize';
+        let cifraFont = parseInt(localStorage.getItem(FONT_KEY), 10) || 16;
+
+        function applyCifraFont() {
+            document.documentElement.style.setProperty('--cifra-font', cifraFont + 'px');
+            localStorage.setItem(FONT_KEY, cifraFont);
+        }
+
+        document.getElementById('fontMinus').addEventListener('click', () => {
+            cifraFont = Math.max(12, cifraFont - 1);
+            applyCifraFont();
+        });
+
+        document.getElementById('fontPlus').addEventListener('click', () => {
+            cifraFont = Math.min(26, cifraFont + 1);
+            applyCifraFont();
+        });
+
+        applyCifraFont();
+
+        // login (placeholder até o backend ter autenticação)
+        document.getElementById('loginButton').addEventListener('click', () => {
+            document.getElementById('loginMsg').textContent =
+                'O login ainda está em desenvolvimento — em breve sua biblioteca ficará vinculada à sua conta.';
+        });
+
         // START RECORDING
-        document.getElementById('startRecord').onclick = async () => {
+        async function startRecording() {
             try {
+                keepRunning = true;
 
                 socket.on('connect', () => {
                     socket.send('Usuário conectado')
@@ -350,6 +704,7 @@ nav .saved-cifras {
                 
                 // Start recording with 1-second chunks
                 mediaRecorder.start(1000);
+                setStreaming(true);
                 document.getElementById('status').textContent = 'Recording...';
 
                 setInterval(stopAndStart,500);
@@ -380,12 +735,13 @@ nav .saved-cifras {
                 
             } catch (err) {
                 console.error('Error starting recording:', err);
+                setStreaming(false);
                 document.getElementById('status').textContent = 'Error: ' + err.message;
             }
-        };
+        }
         
         // STOP RECORDING
-        document.getElementById('stopRecord').onclick = () => {
+        function stopRecording() {
             keepRunning = false
             
             if (mediaRecorder && mediaRecorder.state !== 'inactive') {
@@ -393,8 +749,9 @@ nav .saved-cifras {
                 socket.emit('launch_threads', 'stop')
                 document.getElementById('status').textContent = 'Processing...';
             }
+            setStreaming(false);
             location.reload();
-        };
+        }
 
         socket.on('connect', () => {
             document.getElementById('status').textContent = 'Connected to server';
@@ -436,13 +793,13 @@ nav .saved-cifras {
             // remove o destaque da linha esperada anterior
             document.querySelectorAll('p.expected-line').forEach(p => p.classList.remove('expected-line'));
 
-            // linha atual e anteriores (já reconhecidas) em cinza; pula as
+            // linha atual e anteriores (já reconhecidas) esmaecidas; pula as
             // linhas de acordes/<pre> em vez de parar nelas
-            element.style.color = "#AAAAAA";
+            element.style.color = "#707a86";
             let prevParagraph = element.previousElementSibling;
             while (prevParagraph) {
                 if (prevParagraph.tagName === "P") {
-                    prevParagraph.style.color = "#AAAAAA";
+                    prevParagraph.style.color = "#707a86";
                 }
                 prevParagraph = prevParagraph.previousElementSibling;
             }
@@ -466,18 +823,6 @@ nav .saved-cifras {
                 afterParagraph = afterParagraph.nextElementSibling;
             }
         }
-
-        // LOAD CIFRA
-        document.getElementById('searchCifraClub').addEventListener('click', function() {
-            let artist = document.getElementById('artistName').value.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-');
-            let song = document.getElementById('songName').value.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-');
-            if (artist && song) {
-                let url = `/search?artista=` + artist + '&musica=' + song;
-                window.location.href = url;
-            } else {
-                alert("Please enter both artist and song names.");
-            }
-        });
 
         // KEY CHANGER
 
@@ -528,7 +873,7 @@ nav .saved-cifras {
                 let url = `/search?artista=` + artist + '&musica=' + song;
                 window.location.href = url;
             } else {
-                alert("Please enter both artist and song names.");
+                alert("Informe o artista e a música.");
             }
         });
 
@@ -568,7 +913,7 @@ nav .saved-cifras {
                 const resp = await fetch('/saved_cifras');
                 const data = await resp.json();
                 const select = document.getElementById('savedSongs');
-                select.innerHTML = '<option value="">Cifras salvas...</option>';
+                select.innerHTML = '<option value="">Selecione uma cifra...</option>';
                 data.cifras.forEach(c => {
                     const opt = document.createElement('option');
                     opt.value = c.arquivo;
@@ -587,6 +932,7 @@ nav .saved-cifras {
                 if (data.ok) {
                     document.getElementById('status').textContent = 'Cifra salva: ' + data.arquivo;
                     loadSavedList();
+                    closePanels();
                 } else {
                     alert(data.error || 'Erro ao salvar a cifra.');
                 }
@@ -619,6 +965,7 @@ nav .saved-cifras {
                     return;
                 }
                 editorText.value = data.conteudo;
+                closePanels();
                 editorOverlay.hidden = false;
                 editorText.focus();
             } catch (err) {

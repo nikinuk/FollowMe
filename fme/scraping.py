@@ -1,22 +1,34 @@
 import re
 
+# token de acorde: fundamental A-G, acidente opcional e qualidades usuais
+# (m, maj, min, dim, aug, sus, add, M, +, -, º), dígitos, parênteses e baixo
+# invertido (/G#). Palavras comuns como "Deus" ou "Casa" não casam.
+CHORD_TOKEN_RE = re.compile(
+    r"^[A-G](?:#|b)?(?:(?:maj|min|sus|add|dim|aug|m|M|\+|-|º|°|[0-9])|\([^)]*\))*"
+    r"(?:/[A-G](?:#|b)?[0-9]*)?$"
+)
+
+# marcador de paginação dos blocos de tablatura do CifraClub ("Parte 1 de 9")
+TAB_PART_RE = re.compile(r"^parte\s+\d+\s+de\s+\d+$", re.IGNORECASE)
+
+def _chordish(token: str) -> bool:
+    """Token é acorde, mesmo com parênteses soltos colados (ex.: '(Em6')."""
+    return bool(CHORD_TOKEN_RE.match(token) or CHORD_TOKEN_RE.match(token.strip("()")))
+
 def cifra_normalizer(lines: list[str]) -> list[str]:
-    #eliminate chord lines
-    #chord_regex = r"^[A-G][ABCDEFGabcdefgm#°+-/()M123456789]"
-    chord_regex = r"^[A-G]"
+    #eliminate chord lines: casa cada token inteiro contra CHORD_TOKEN_RE;
+    #a heurística antiga quebrava acordes como F#m7(5-/11) em pseudo-palavras
+    #("5-", "11") e deixava a linha passar como letra
     new_lines = []
+    th = 0.8
     for line in lines:
-        cs = 0
-        notcs = 0
-        th = 0.8
-        for word in line.replace("/", " ").replace("(", "").replace(")", "").split():
-            if re.match(chord_regex, word):
-                cs += 1
-            else:
-                notcs += 1
-        if cs + notcs == 0:
+        # tokens só de pontuação (ex.: "(" e ")" em "( Em6 Em6/B )") são
+        # neutros: não contam nem como acorde nem como palavra de letra
+        tokens = [t for t in line.split() if re.search(r"\w", t)]
+        if not tokens:
             continue
-        if cs / (cs + notcs) < th:
+        chordish = sum(1 for t in tokens if _chordish(t))
+        if chordish / len(tokens) < th:
             new_lines.append(line.replace("\n", ""))
 
     lines = new_lines
@@ -30,10 +42,12 @@ def cifra_normalizer(lines: list[str]) -> list[str]:
 
     lines = new_lines
 
-    # eliminate tab lines (many - char)
+    # eliminate tab lines (many - char) and tab part markers ("Parte 1 de 9")
     new_lines = []
     for line in lines:
         if line.count("-") > 5:
+            continue
+        if TAB_PART_RE.match(line.strip()):
             continue
         new_lines.append(line)
 
