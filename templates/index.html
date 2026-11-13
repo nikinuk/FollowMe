@@ -38,6 +38,16 @@ pre {
     margin: 0px;
 }
 
+/* próxima linha esperada: fundo verde-claro (caneta marca-texto) e negrito
+   simulado via text-shadow, que engrossa o traço sem alterar a largura dos
+   caracteres nem o espaçamento da fonte (font-weight mudaria o layout) */
+p.expected-line {
+    background-color: #c9f7c5;
+    border-radius: 3px;
+    width: fit-content;
+    text-shadow: 0 0 0.6px currentColor, 0 0 0.6px currentColor;
+}
+
 .container {
     width: 90%;
     margin: 0 auto;
@@ -417,32 +427,43 @@ nav .saved-cifras {
 
         // COLORING
         function changeParagraphColors(element) {
-            
+
             if (!element) {
                 console.error("Paragraph not found.");
                 return;
             }
 
-            // Set current paragraph color
-            element.style.color = "#AAAAAA";
-            //element.style.backgroundColor = "#GGGGGG";
+            // remove o destaque da linha esperada anterior
+            document.querySelectorAll('p.expected-line').forEach(p => p.classList.remove('expected-line'));
 
-            // Change color of previous paragraphs
+            // linha atual e anteriores (já reconhecidas) em cinza; pula as
+            // linhas de acordes/<pre> em vez de parar nelas
+            element.style.color = "#AAAAAA";
             let prevParagraph = element.previousElementSibling;
-            while (prevParagraph && prevParagraph.tagName === "P") {
-                prevParagraph.style.color = "#AAAAAA";
-                //prevParagraph.style.backgroundColor = "#FFFFFF";
+            while (prevParagraph) {
+                if (prevParagraph.tagName === "P") {
+                    prevParagraph.style.color = "#AAAAAA";
+                }
                 prevParagraph = prevParagraph.previousElementSibling;
             }
 
-            // Change color of next two paragraphs
+            // próxima linha esperada: primeiro <p> de letra depois da atual
+            // (pulando acordes/quebras); recebe o destaque marca-texto
             let nextParagraph = element.nextElementSibling;
-            let nextCount = 0;
-            while (nextParagraph && nextParagraph.tagName === "P" && nextCount < 2) {
-                nextParagraph.style.color = "#FFFFFF";
-                //nextParagraph.style.backgroundColor = "#00FF00";
+            while (nextParagraph && nextParagraph.tagName !== "P") {
                 nextParagraph = nextParagraph.nextElementSibling;
-                nextCount++;
+            }
+            if (nextParagraph) {
+                nextParagraph.classList.add('expected-line');
+            }
+
+            // linhas seguintes voltam ao normal (caso a posição tenha recuado)
+            let afterParagraph = nextParagraph ? nextParagraph.nextElementSibling : null;
+            while (afterParagraph) {
+                if (afterParagraph.tagName === "P") {
+                    afterParagraph.style.color = "";
+                }
+                afterParagraph = afterParagraph.nextElementSibling;
             }
         }
 
