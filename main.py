@@ -82,6 +82,11 @@ LINHAS_PROMPT = int(os.environ.get("LINHAS_PROMPT", 3))
 # segmentos com no_speech_prob acima deste limite são tratados como
 # instrumental/silêncio e descartados (evita que o prompt vire "letra falsa")
 NO_SPEECH_PROB_MAX = float(os.environ.get("NO_SPEECH_PROB_MAX", 0.6))
+# preço do whisper-1: cobrado por minuto de áudio transcrito
+WHISPER_PRICE_PER_MIN = float(os.environ.get("WHISPER_PRICE_PER_MIN", 0.006))
+# acumulador de segundos de áudio enviados ao whisper-1 na sessão atual
+# (verbose_json devolve 'duration', a duração faturada de cada arquivo)
+session_audio_seconds = 0.0
 # pasta local onde as cifras processadas são salvas/recuperadas
 MUSICAS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "musicas")
 # armazenamento por usuário: bucket GCS (GCS_BUCKET) quando logado, senão pastas locais
@@ -258,7 +263,7 @@ def find_best_line(block):
     print("find_best_line encerrada")
 
 def speech_recognition(): 
-    global CarryOn
+    global CarryOn, session_audio_seconds
     while CarryOn:
         try:
             rec_frames = recordings.get(block=True, timeout=2)
@@ -269,6 +274,10 @@ def speech_recognition():
             # o prompt dinâmico com as próximas linhas da música guia o Whisper
             # (vocabulário e idioma), reduzindo alucinações em silêncio/ruído
             result = transcribe(rec_frames, prompt=current_prompt)
+            # soma a duração faturada deste arquivo ao consumo da sessão
+            session_audio_seconds += float(getattr(result, "duration", 0) or 0)
+            print(f"consumo whisper-1 acumulado: {session_audio_seconds:.1f}s "
+                  f"(~US$ {session_audio_seconds / 60 * WHISPER_PRICE_PER_MIN:.4f})")
             # filtra segmento a segmento: no_speech_prob alto = instrumental,
             # o texto é alucinação (geralmente eco do prompt) e deve ser descartado
             kept = []
@@ -292,13 +301,15 @@ transcribe_thread = None
 process_thread = None
 
 def start_threads(block):
-    global CarryOn, transcribe_thread, process_thread, current_prompt
+    global CarryOn, transcribe_thread, process_thread, current_prompt, session_audio_seconds
     # cliques repetidos em START criavam threads duplicadas competindo pelas
     # mesmas filas, cada uma com sua própria janela -> saltos erráticos
     if transcribe_thread is not None and transcribe_thread.is_alive():
         print("Threads já em execução; START ignorado")
         return
     CarryOn = True
+    # nova sessão de seguimento: zera o consumo acumulado do whisper-1
+    session_audio_seconds = 0.0
     current_prompt = build_prompt(block)
     transcribe_thread = Thread(target=speech_recognition, daemon=True)
     transcribe_thread.start()
@@ -337,6 +348,24 @@ def launch_threads(data):
         while not transcriptions.empty():
             transcriptions.get()
         print("Queues emptied")
+
+        def emitir_custo_sessao():
+            # espera a transcrição em andamento terminar (CarryOn=False faz a
+            # thread sair em até ~2s após o item atual) para incluir seu tempo
+            t = transcribe_thread
+            if t is not None:
+                t.join(timeout=8)
+            minutos = session_audio_seconds / 60
+            custo = minutos * WHISPER_PRICE_PER_MIN
+            print(f"Sessão encerrada: {session_audio_seconds:.1f}s transcritos, custo estimado US$ {custo:.4f}")
+            socketio.emit('session_cost', {
+                'segundos': round(session_audio_seconds, 1),
+                'minutos': round(minutos, 2),
+                'custo_usd': round(custo, 4),
+                'preco_por_minuto': WHISPER_PRICE_PER_MIN,
+            })
+
+        socketio.start_background_task(emitir_custo_sessao)
 
 @socketio.on('connect')
 def handle_connect():
