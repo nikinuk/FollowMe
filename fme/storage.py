@@ -35,7 +35,7 @@ class UserStorage:
         self.musicas_dir = musicas_dir
         self.local_users_dir = local_users_dir
         self.bucket = None
-        bucket_name = os.environ.get("GCS_BUCKET", "").strip()
+        bucket_name = os.environ.get("GCS_BUCKET", "repositorio-usuario").strip()
         if bucket_name:
             if _gcs is None:
                 print("GCS_BUCKET definido, mas google-cloud-storage nao esta instalado; usando pasta local.")
