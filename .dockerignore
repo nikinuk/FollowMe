@@ -1,16 +1,46 @@
+﻿# Git / docs / arquivos de build
+.git
+.gitignore
+.dockerignore
 Dockerfile
 README.md
+Intruções_gcloud.txt
+
+# Segredos (passar via env vars no Cloud Run)
+.env
+
+# Python
+__pycache__
 *.pyc
 *.pyo
 *.pyd
-*.sh
-*.ipynb
-__pycache__
 .pytest_cache
-.idea
 venv
+
+# Modelos de ML (Vosk desativado no código; 51 MB)
+models
+
+# Músicas salvas localmente (mantém só a procissao.txt, carregada no boot do main.py)
+musicas/*
+!musicas/procissao.txt
+
+# Contas/cifras de usuários salvas localmente em dev (na nuvem ficam no bucket)
+usuarios
+
+# Áudio temporário gerado em runtime
+audio.webm
+webm_path
+*.wav
+
+# Notebooks, scripts e IDE
+*.ipynb
+*.sh
+.ipynb_checkpoints
+.idea
+.vscode
+
+# Pastas legadas
 archive
 reports
 clientes
 db
-instruções_gcloud.txt

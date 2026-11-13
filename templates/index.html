@@ -478,14 +478,21 @@ p.expected-line {
             <h3>Usuário</h3>
             <button type="button" class="panel-close" aria-label="Fechar">&times;</button>
         </div>
-        <p class="panel-note">Entre para sincronizar sua biblioteca de cifras entre dispositivos.</p>
-        <label class="field">E-mail
-            <input type="email" id="loginEmail" placeholder="voce@email.com" autocomplete="username">
-        </label>
-        <label class="field">Senha
-            <input type="password" id="loginPassword" placeholder="••••••••" autocomplete="current-password">
-        </label>
-        <button type="button" id="loginButton" class="btn btn-primary">Entrar</button>
+        <p class="panel-note">Entre para guardar sua biblioteca de cifras na nuvem. No primeiro
+        acesso com um e-mail a conta é criada automaticamente com a senha informada.</p>
+        <div id="loginForm">
+            <label class="field">E-mail
+                <input type="email" id="loginEmail" placeholder="voce@email.com" autocomplete="username">
+            </label>
+            <label class="field">Senha
+                <input type="password" id="loginPassword" placeholder="••••••••" autocomplete="current-password">
+            </label>
+            <button type="button" id="loginButton" class="btn btn-primary">Entrar</button>
+        </div>
+        <div id="loggedBox" hidden>
+            <p class="panel-note">Conectado como <b id="loggedEmail"></b>.</p>
+            <button type="button" id="logoutButton" class="btn btn-secondary">Sair</button>
+        </div>
         <p class="panel-note" id="loginMsg"></p>
     </aside>
 
@@ -634,10 +641,61 @@ p.expected-line {
 
         applyCifraFont();
 
-        // login (placeholder até o backend ter autenticação)
-        document.getElementById('loginButton').addEventListener('click', () => {
-            document.getElementById('loginMsg').textContent =
-                'O login ainda está em desenvolvimento — em breve sua biblioteca ficará vinculada à sua conta.';
+        // ===== Usuário: login simples (sessão via cookie) =====
+        const loginMsg = document.getElementById('loginMsg');
+
+        function setUserUI(email) {
+            document.getElementById('loginForm').hidden = !!email;
+            document.getElementById('loggedBox').hidden = !email;
+            if (email) document.getElementById('loggedEmail').textContent = email;
+        }
+
+        async function refreshUser() {
+            try {
+                const resp = await fetch('/whoami');
+                const data = await resp.json();
+                setUserUI(data.logado ? data.email : null);
+            } catch (err) {
+                console.error('Erro ao consultar usuário:', err);
+            }
+            loadSavedList();
+        }
+
+        document.getElementById('loginButton').addEventListener('click', async () => {
+            const email = document.getElementById('loginEmail').value.trim();
+            const senha = document.getElementById('loginPassword').value;
+            loginMsg.textContent = '';
+            try {
+                const resp = await fetch('/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email: email, senha: senha })
+                });
+                const data = await resp.json();
+                if (data.ok) {
+                    loginMsg.textContent = data.novo
+                        ? 'Conta criada! Sua biblioteca agora fica guardada na nuvem.'
+                        : 'Bem-vindo de volta!';
+                    document.getElementById('loginPassword').value = '';
+                    setUserUI(data.email);
+                    loadSavedList();
+                } else {
+                    loginMsg.textContent = data.error || 'Erro ao entrar.';
+                }
+            } catch (err) {
+                loginMsg.textContent = 'Erro ao entrar: ' + err.message;
+            }
+        });
+
+        document.getElementById('logoutButton').addEventListener('click', async () => {
+            try {
+                await fetch('/logout', { method: 'POST' });
+            } catch (err) {
+                console.error('Erro ao sair:', err);
+            }
+            loginMsg.textContent = '';
+            setUserUI(null);
+            loadSavedList();
         });
 
         // START RECORDING
@@ -950,7 +1008,7 @@ p.expected-line {
             }
         });
 
-        loadSavedList();
+        refreshUser();
 
         // MODO EDIÇÃO
         const editorOverlay = document.getElementById('editorOverlay');
