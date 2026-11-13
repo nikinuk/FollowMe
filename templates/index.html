@@ -38,6 +38,16 @@ pre {
     margin: 0px;
 }
 
+/* próxima linha esperada: fundo verde-claro (caneta marca-texto) e negrito
+   simulado via text-shadow, que engrossa o traço sem alterar a largura dos
+   caracteres nem o espaçamento da fonte (font-weight mudaria o layout) */
+p.expected-line {
+    background-color: #c9f7c5;
+    border-radius: 3px;
+    width: fit-content;
+    text-shadow: 0 0 0.6px currentColor, 0 0 0.6px currentColor;
+}
+
 .container {
     width: 90%;
     margin: 0 auto;
@@ -116,6 +126,49 @@ nav .settings button {
     margin: 5px;
     width: 25px;
   }
+
+nav .saved-cifras {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 5px;
+    margin: 3px;
+}
+
+.editor-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 10;
+    background: #fff;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 10px;
+}
+
+.editor-overlay[hidden] {
+    display: none;
+}
+
+.editor-overlay .editor-header {
+    font-size: 13px;
+    color: #555;
+}
+
+.editor-overlay textarea {
+    flex: 1;
+    /* monoespaçada: mantém os acordes alinhados com as sílabas da letra */
+    font-family: Consolas, "Courier New", monospace;
+    font-size: 14px;
+    white-space: pre;
+    overflow: auto;
+    resize: none;
+}
+
+.editor-overlay .editor-actions {
+    display: flex;
+    gap: 10px;
+}
     </style>
 </head>
 <body>
@@ -130,6 +183,14 @@ nav .settings button {
           <button type="button" id="searchCifraClub">Search Cifra Club</button>
 
         </form>
+        <div class="saved-cifras">
+            <button type="button" id="saveCifra">Salvar cifra</button>
+            <button type="button" id="editCifra">Editar</button>
+            <select id="savedSongs">
+                <option value="">Cifras salvas...</option>
+            </select>
+            <button type="button" id="openSaved">Abrir</button>
+        </div>
         <div class="settings">
             <label for="keyDisplay">Key: </label>
             <span id="keyDisplay"></span>
@@ -155,6 +216,19 @@ nav .settings button {
             <h1>{{ indexed_text.message }}</h1>
             <p><a href="{{ indexed_text.url }}">{{ indexed_text.url }}</a></p>
         {% endif %}
+    </div>
+
+    <div id="editorOverlay" class="editor-overlay" hidden>
+        <div class="editor-header">
+            Modo edição — 1ª linha: título | 2ª linha: autor | demais linhas: cifra.
+            Copie e cole blocos livremente (ex.: duplicar o refrão); os acordes são
+            detectados e destacados novamente ao aplicar.
+        </div>
+        <textarea id="editorText" spellcheck="false" wrap="off"></textarea>
+        <div class="editor-actions">
+            <button type="button" id="editorApply">Aplicar e salvar</button>
+            <button type="button" id="editorCancel">Cancelar</button>
+        </div>
     </div>
 
     <footer class="app-footer">
@@ -353,32 +427,43 @@ nav .settings button {
 
         // COLORING
         function changeParagraphColors(element) {
-            
+
             if (!element) {
                 console.error("Paragraph not found.");
                 return;
             }
 
-            // Set current paragraph color
-            element.style.color = "#AAAAAA";
-            //element.style.backgroundColor = "#GGGGGG";
+            // remove o destaque da linha esperada anterior
+            document.querySelectorAll('p.expected-line').forEach(p => p.classList.remove('expected-line'));
 
-            // Change color of previous paragraphs
+            // linha atual e anteriores (já reconhecidas) em cinza; pula as
+            // linhas de acordes/<pre> em vez de parar nelas
+            element.style.color = "#AAAAAA";
             let prevParagraph = element.previousElementSibling;
-            while (prevParagraph && prevParagraph.tagName === "P") {
-                prevParagraph.style.color = "#AAAAAA";
-                //prevParagraph.style.backgroundColor = "#FFFFFF";
+            while (prevParagraph) {
+                if (prevParagraph.tagName === "P") {
+                    prevParagraph.style.color = "#AAAAAA";
+                }
                 prevParagraph = prevParagraph.previousElementSibling;
             }
 
-            // Change color of next two paragraphs
+            // próxima linha esperada: primeiro <p> de letra depois da atual
+            // (pulando acordes/quebras); recebe o destaque marca-texto
             let nextParagraph = element.nextElementSibling;
-            let nextCount = 0;
-            while (nextParagraph && nextParagraph.tagName === "P" && nextCount < 2) {
-                nextParagraph.style.color = "#FFFFFF";
-                //nextParagraph.style.backgroundColor = "#00FF00";
+            while (nextParagraph && nextParagraph.tagName !== "P") {
                 nextParagraph = nextParagraph.nextElementSibling;
-                nextCount++;
+            }
+            if (nextParagraph) {
+                nextParagraph.classList.add('expected-line');
+            }
+
+            // linhas seguintes voltam ao normal (caso a posição tenha recuado)
+            let afterParagraph = nextParagraph ? nextParagraph.nextElementSibling : null;
+            while (afterParagraph) {
+                if (afterParagraph.tagName === "P") {
+                    afterParagraph.style.color = "";
+                }
+                afterParagraph = afterParagraph.nextElementSibling;
             }
         }
 
@@ -476,6 +561,93 @@ nav .settings button {
             }
             updateUrl(newKey);
         }
+
+        // SALVAR / RECUPERAR CIFRAS
+        async function loadSavedList() {
+            try {
+                const resp = await fetch('/saved_cifras');
+                const data = await resp.json();
+                const select = document.getElementById('savedSongs');
+                select.innerHTML = '<option value="">Cifras salvas...</option>';
+                data.cifras.forEach(c => {
+                    const opt = document.createElement('option');
+                    opt.value = c.arquivo;
+                    opt.textContent = c.author ? `${c.title} — ${c.author}` : c.title;
+                    select.appendChild(opt);
+                });
+            } catch (err) {
+                console.error('Erro ao listar cifras salvas:', err);
+            }
+        }
+
+        document.getElementById('saveCifra').addEventListener('click', async () => {
+            try {
+                const resp = await fetch('/save_cifra', { method: 'POST' });
+                const data = await resp.json();
+                if (data.ok) {
+                    document.getElementById('status').textContent = 'Cifra salva: ' + data.arquivo;
+                    loadSavedList();
+                } else {
+                    alert(data.error || 'Erro ao salvar a cifra.');
+                }
+            } catch (err) {
+                alert('Erro ao salvar a cifra: ' + err.message);
+            }
+        });
+
+        document.getElementById('openSaved').addEventListener('click', () => {
+            const arquivo = document.getElementById('savedSongs').value;
+            if (arquivo) {
+                window.location.href = '/load_cifra?arquivo=' + encodeURIComponent(arquivo);
+            } else {
+                alert('Selecione uma cifra salva.');
+            }
+        });
+
+        loadSavedList();
+
+        // MODO EDIÇÃO
+        const editorOverlay = document.getElementById('editorOverlay');
+        const editorText = document.getElementById('editorText');
+
+        document.getElementById('editCifra').addEventListener('click', async () => {
+            try {
+                const resp = await fetch('/cifra_raw');
+                const data = await resp.json();
+                if (!data.ok) {
+                    alert(data.error || 'Erro ao abrir o editor.');
+                    return;
+                }
+                editorText.value = data.conteudo;
+                editorOverlay.hidden = false;
+                editorText.focus();
+            } catch (err) {
+                alert('Erro ao abrir o editor: ' + err.message);
+            }
+        });
+
+        document.getElementById('editorCancel').addEventListener('click', () => {
+            editorOverlay.hidden = true;
+        });
+
+        document.getElementById('editorApply').addEventListener('click', async () => {
+            try {
+                const resp = await fetch('/edit_cifra', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ conteudo: editorText.value })
+                });
+                const data = await resp.json();
+                if (data.ok) {
+                    // recarrega a cifra já reprocessada a partir do arquivo salvo
+                    window.location.href = '/load_cifra?arquivo=' + encodeURIComponent(data.arquivo);
+                } else {
+                    alert(data.error || 'Erro ao aplicar a edição.');
+                }
+            } catch (err) {
+                alert('Erro ao aplicar a edição: ' + err.message);
+            }
+        });
 
         // Initial key display update
         updateKeyDisplay(getKeyValueFromUrl());
